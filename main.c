@@ -15,6 +15,8 @@
 #include <stdint.h>
 #include <time.h>
 #include <math.h>       // need to compile with `-lm` flag
+#include <string.h>
+#include "mt19937ar.c"
 
 
 
@@ -38,6 +40,13 @@
 // structures
 // ----------------
 typedef struct Particle Particle;
+typedef struct compl compl;
+typedef struct bndT bndT;
+typedef struct blistT blistT;
+typedef struct nlistT nlistT;
+typedef struct posnb posnb;
+
+
 // functions
 // ----------------
 int overlapCheck(Particle* one, Particle* two);
@@ -55,9 +64,26 @@ double measurePF(void);
 int buildCL(int usecase);
 int updateSingleCL(Particle* one);
 int retrieveIndex(int u, int v, int w);
-int CLOverflow(void);
 int snapshot(void);
 int takeSnapshot(int n);
+int findClusters(void);
+void init_nblist(void);
+void update_nblistp_sann(int p);
+int compare(const void * a, const void * b);
+compl* calc_order(void);
+double dotprod(compl *vec1, compl *vec2, int l);
+double sqr(double x);
+void order(int l, bndT *bnd, compl *res1, compl *res2);
+float plgndr(int l, int m, double x);
+double facs(int l, int m);
+double gammln(double xx);
+double minpow(int m);
+int* calc_conn(compl* orderp);
+int calc_clusters(int* conn, compl* orderp);
+void cycle(void);
+double Ubias(int sizeClus);
+void trajectory(void);
+
 
 
 
@@ -94,16 +120,15 @@ int cSnapshot = 0;                      // snapshot count
 char snap_filename[100];                // name of the output file for snapshots
 // bop
 // -----------------------
-double *clustersLog = NULL;     // log of the number of clusters of a given size
-double bndLength = 1.4f;        // [TUNABLE] distance cutoff for bonds
-double bndLengthSq = bndLength  // square of the distance cutoff for bonds
-                     * bndLength
-double bnd_cuttoff = 0.7f;      // [TUNABLE] order to be called a correlated bond
-int nbnd_cuttoff = 4;           // [TUNABLE] number of correlated bonds for a crystalline particle
-double obnd_cuttoff = 0.0f;     // [TUNABLE] order to be in the same cluster (0.0 for all touching clusters 0.9 to see defects)
+double *clustersLog = NULL;             // log of the number of clusters of a given size
+const double bndLength = 1.4f;          // [TUNABLE] distance cutoff for bonds
+const double bndLengthSq = bndLength    // square of the distance cutoff for bonds
+                     * bndLength;
+double bnd_cutoff = 0.7f;               // [TUNABLE] order to be called a correlated bond
+int nbnd_cutoff = 4;                    // [TUNABLE] number of correlated bonds for a crystalline particle
+double obnd_cutoff = 0.0f;              // [TUNABLE] order to be in the same cluster (0.0 for all touching clusters 0.9 to see defects)
 double maxr2 = 0.0f;
 blistT *blist;
-double ;
 int maxClus = 0;                // size of the largest cluster in the system at its current state
 int maxClusOld = 0;             // backup of the size of the largest cluster in the system at its former state
 // umbrella sampling
@@ -800,6 +825,7 @@ int snapshot(void)
         writeto = fopen("snap_density.txt", "a");
         fprintf(writeto, "%.12lf\n", 6.0f * measurePF() / (M_PI * sigma * sigma * sigma));
         fclose(writeto);
+        return 0;
 }
 
 
@@ -908,7 +934,7 @@ void update_nblistp_sann(int p)
                         {
                                 cellIndex = retrieveIndex(i,j,k);
                                 current = CLTable[cellIndex];
-                                while (current != NULL)
+                                while (current != NULL && numposnb <= N)
                                 {
                                         int currentID = current->index;
                                         if (p == currentID)
@@ -929,13 +955,6 @@ void update_nblistp_sann(int p)
 
                                         // computes squared distance between two particles
                                         d = dx * dx + dy * dy + dz * dz;
-
-                                        // escapes if # of NN exceeds N
-                                        if (numposnb == N)
-                                        { // same particle is already skipped, should be N-1 instead of N
-                                                printf ("Too many neighbours\n");
-                                                break;
-                                        }
 
                                         // saves neighbour data
 	                                neighbours[numposnb].part = current;
@@ -1322,12 +1341,12 @@ int* calc_conn(compl* orderp)
                 z = 0;
                 for(int j = 0; j < blist[i].n; j++)
                 {
-                        if(dotprod(orderp + i * (2 * l + 1), orderp + blist[i].bnd[j].n * (2 * l + 1), l) > bnd_cuttoff)
+                        if(dotprod(orderp + i * (2 * l + 1), orderp + blist[i].bnd[j].n * (2 * l + 1), l) > bnd_cutoff)
                         { 
                                 z++;
                         }
                 }
-                if(z >= nbnd_cuttoff)
+                if(z >= nbnd_cutoff)
                 {
                         conn[i]=1;
                 } 
@@ -1372,11 +1391,11 @@ int calc_clusters(int* conn, compl* orderp)
                         int tmp = blist[pn].bnd[jj].n;
                         if(conn[tmp] != 0
                            && cluss[tmp] == 0
-                           && dotprod(orderp + pn * (2 * l + 1), orderp + tmp * (2 * l + 1), l) > obnd_cuttoff
+                           && dotprod(orderp + pn * (2 * l + 1), orderp + tmp * (2 * l + 1), l) > obnd_cutoff
                            )
                         {
-                        //obnd_cuttoff = 0.9 gives nice results,
-                        //obnd_cuttoff =  0.6 gives all touching nuclei as one big nuclei
+                        //obnd_cutoff = 0.9 gives nice results,
+                        //obnd_cutoff =  0.6 gives all touching nuclei as one big nuclei
                                 cs++;
                                 setcluss(tmp);
                         }  
@@ -1414,7 +1433,7 @@ int calc_clusters(int* conn, compl* orderp)
         {
                 tcs += size[i];
                 if (size[i] != 0)
-                        clusterTable[size[i]] += 1.0f;
+                        clustersLog[size[i]] += 1.0f;
         }
 
         //printf("%i clusters, Max clustersize %i, percentage of crystalline particles %f\n", cn-1, big, tcs / (double) N);
@@ -1478,7 +1497,6 @@ void trajectory(void)
         \*/
        
         double proba = genrand();
-        double Ubias = 0.0f;
         double rule = 0.0f;
 
         // computes new trajectory
@@ -1494,13 +1512,13 @@ void trajectory(void)
         if (proba > rule)
         {// reject trajectory
                 *particles = *particlesCopy;
-                updateCL(2);
+                buildCL(2);
         }
         else
         {// accept trajectory
                 maxClusOld = maxClus;
                 potBiasOld = potBias;
-                *particlesCopy = particles*;
+                *particlesCopy = *particles;
         }
 
         // clustersLog must be saved at this point, as well as maxClus
