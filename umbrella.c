@@ -26,10 +26,10 @@
 // ============================
 #define T 300                                           // absolute temperature
 #define kB 1.380649e-23                                 // Boltzmann constant
+#define eps kB*T                                        // unit of energy
+#define INVFPI 0.07957747154594766788444188168625718101 // = 1 / (4 * pi)
 #define MAX_PART_CELL 40
 #define MAX_NEIGHBORS 50
-#define INVFPI 0.07957747154594766788444188168625718101 // = 1 / (4 * pi)
-#define eps kB*T                                        // unit of energy
 
 
 
@@ -59,7 +59,6 @@ void writeCoords(char *filename);
 int particleMove(double particleStepTune);
 int volumeMove(double volumeStepTune);
 double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate);
-void stepTuneWrapper(int MCCycle, double acceptanceRate);
 double measurePF(void);
 int buildCL(int usecase);
 int updateSingleCL(Particle* one);
@@ -93,20 +92,20 @@ void trajectory(void);
 // ======================
 // hard spheres system
 // -----------------------
-int N = 0;                      // [READ FROM IMPUT] number of particles in the system
-double L = 0.0f;                // [READ FROM INPUT] reduced box size
-double P = 16.0f;               // [TUNABLE] reduced pressure --- only relevant for NPT
-double sigma = 1.0f;            // unit of length = 1 = max particle size
-double PF = 0.0f;               // [CALCULATED] system packing fraction
-double rho = 0.0f;              // [CALCULATED] reduced number density
-Particle *particles = NULL;     // [READ FROM INPUT] pointer to the table of particles data
-Particle *particlesCopy = NULL; // copy of the above
+int N = 0;                              // [READ FROM IMPUT] number of particles in the system
+double L = 0.0f;                        // [READ FROM INPUT] reduced box size
+double P = 16.0f;                       // [TUNABLE] reduced pressure --- only relevant for NPT
+double sigma = 1.0f;                    // unit of length = 1 = max particle size
+double PF = 0.0f;                       // [CALCULATED] system packing fraction
+double rho = 0.0f;                      // [CALCULATED] reduced number density
+Particle *particles = NULL;             // [READ FROM INPUT] pointer to the table of particles data
+Particle *particlesCopy = NULL;         // backup copy of the above
 // mc
 // -----------------------
-char init_filename[100];        // name of the initial configuration input file
-const int MCCycle = 2000000;    // [TUNABLE] number of cycles
-int randseed = 492431;          // [TUNABLE] seed for random number generator
-int trajectoryLength = 20;      // [TUNABLE] length of a trajectory, in number of cycles, must be a divider of MCCycle
+const int MCCycle = 4000000;            // [TUNABLE] number of cycles
+int randseed = 848321;                  // [TUNABLE] seed for random number generator
+int trajectoryLength = 20;              // [TUNABLE] length of a trajectory, in number of cycles, must be a divider of MCCycle
+double targetedAcceptanceRate = 0.30f;  // [TUNABLE] targeted acceptance rate for particle moves and volume moves
 // cell lists
 // -----------------------
 Particle **CLTable = NULL;
@@ -120,8 +119,10 @@ int cSnapshot = 0;                      // snapshot count
 char snap_filename[100];                // name of the output file for snapshots
 // bop
 // -----------------------
-double *clustersLog = NULL;             // log of the number of clusters of a given size
-const double bndLength = 1.4f;          // [TUNABLE] distance cutoff for bonds
+int *clustersLog = NULL;                // log of the number of clusters of a given size
+int *clustersLogCopy = NULL;            // backup copy of the above 
+int countLog;                           // number of independent cluster sizes logged
+const double bndLength = 1.4f;          // [TUNABLE] distance cutoff for bonds, if used
 const double bndLengthSq = bndLength    // square of the distance cutoff for bonds
                      * bndLength;
 double bnd_cutoff = 0.7f;               // [TUNABLE] order to be called a correlated bond
@@ -129,18 +130,19 @@ int nbnd_cutoff = 4;                    // [TUNABLE] number of correlated bonds 
 double obnd_cutoff = 0.0f;              // [TUNABLE] order to be in the same cluster (0.0 for all touching clusters 0.9 to see defects)
 double maxr2 = 0.0f;
 blistT *blist;
-int maxClus = 0;                // size of the largest cluster in the system at its current state
-int maxClusOld = 0;             // backup of the size of the largest cluster in the system at its former state
+int maxClus = 0;                        // size of the largest cluster in the system at its current state
+int maxClusOld = 0;                     // backup of the size of the largest cluster in the system at its former state
 // umbrella sampling
 // -----------------------
-double k = 0.15;                // [TUNABLE] coupling parameter for the bias potential
-int n0 = 10;                    // [TUNABLE] targeted cluster size
-double potBias = 0.0f;          // value of the bias potential associated with the size of the largest cluster in the current state of the system
-double potBiasOld = 0.0f;       // value of the bias potential associated with the size of the largest cluster in the previous state of the system
+double k = 0.15;                        // [TUNABLE] coupling parameter for the bias potential
+int n0 = 10;                            // [TUNABLE] targeted cluster size
+double potBias = 0.0f;                  // value of the bias potential associated with the size of the largest cluster in the current state of the system
+double potBiasOld = 0.0f;               // value of the bias potential associated with the size of the largest cluster in the previous state of the system
 // input/output
 // -----------------------
-// ...
-
+char* init_filename;                    // name of the initial configuration input file
+char lastsnap_filename[200];            // name of the last snapshot output file
+char clusterlog_filename[200];          // name of the clusters log output file
 
 
 
@@ -226,12 +228,14 @@ struct posnb
 // ===============
 int overlapCheck(Particle* one, Particle* two)
 {
-        /* Function:    overlapCheck
-         * -------------------------
-         * Checks for overlap between two particles
+        /*\
+         *  Function:    overlapCheck
+         *  -------------------------
+         *  Checks for overlap between two particles
          *
-         * return:      1 if there is overlap, 0 if not
-         */
+         *  return:      1 if there is overlap, 0 if not
+        \*/
+
         double dx = one->x - two->x,
                dy = one->y - two->y,
                dz = one->z - two->z;
@@ -247,12 +251,14 @@ int overlapCheck(Particle* one, Particle* two)
 
 int overlapCheckGlobal(void)
 {
-        /* Function:     overlapCheckGlobal
-         * -----------------------------
-         * Checks for overlap in the whole system, i.e. for N(N-1)/2 pairs
+        /*\
+         *  Function:     overlapCheckGlobal
+         *  -----------------------------
+         *  Checks for overlap in the whole system, i.e. for N(N-1)/2 pairs
          *
-         * return:     1 if there is overlap, 0 if not
-         */
+         *  return:     1 if there is overlap, 0 if not
+        \*/
+
         int overlap = 0, n = 1, m = 0;
         while ((overlap == 0) && (n < N))
         {
@@ -271,13 +277,15 @@ int overlapCheckGlobal(void)
 
 int overlapCheckGlobalCL(void)
 {
-        /* Function:     overlapCheckGlobalCL
-         * ----------------------------------
-         * Checks for overlap in the whole system using CLs; also checks pairs
-         * only once
+        /*\
+         *  Function:     overlapCheckGlobalCL
+         *  ----------------------------------
+         *  Checks for overlap in the whole system using CLs; also checks pairs
+         *  only once
          *
-         * return:     1 if there is overlap, 0 if not
-         */
+         *  return:     1 if there is overlap, 0 if not
+        \*/
+
         for (int i = 0; i < N; i++)
         {
                 if (overlapCheckCL(i))
@@ -290,17 +298,18 @@ int overlapCheckGlobalCL(void)
 
 int overlapCheckCL(int n)
 {
-        /*
-         * Function:    overlapCheckCL
-         * ---------------------------
-         * Checks for overlap between a given particle and all other particles
-         * that can be found in neighbouring cells. Relies on the Cell Lists
-         * implementation.
+        /*\
+         *  Function:    overlapCheckCL
+         *  ---------------------------
+         *  Checks for overlap between a given particle and all other particles
+         *  that can be found in neighbouring cells. Relies on the Cell Lists
+         *  implementation.
          *
-         * n:           index of the particle to check overlap for
+         *  n:           index of the particle to check overlap for
          *
-         * return:      1 if there's overlap, 0 if not
-         */
+         *  return:      1 if there's overlap, 0 if not
+        \*/
+        
         int a = particles[n].x / sCell1D;
         int b = particles[n].y / sCell1D;
         int c = particles[n].z / sCell1D;
@@ -330,11 +339,12 @@ int overlapCheckCL(int n)
 
 void sanityCheck(void)
 {
-        /*
-         * Function:    sanityCheck
-         * ------------------------
-         * Ends program execution if there is overlap in the system
-         */
+        /*\
+         *  Function:    sanityCheck
+         *  ------------------------
+         *  Ends program execution if there is overlap in the system
+        \*/
+        
         if (overlapCheckGlobal())
         {
                 printf("Something is VERY wrong... There's overlap...\n");
@@ -346,18 +356,18 @@ void sanityCheck(void)
 
 void readInit(char *filename)
 {
-        /*
-         * Function:    readInit
-         * ---------------------
-         * Initializes the table of data of all N particles by reading
-         * it from a user supplied .sph file; particles coordinates
-         * are written in reduced units; also retrieves **cubic** box size
-         * NB: Reading is done only for files with typesetting indicated above
-         * NB: It is assumed that the supplied init file is written in standard units so
-         * conversion to reduced units is applied
+        /*\
+         *  Function:    readInit
+         *  ---------------------
+         *  Initializes the table of data of all N particles by reading
+         *  it from a user supplied .sph file; particles coordinates
+         *  are written in reduced units; also retrieves **cubic** box size
+         *  NB: Reading is done only for files with typesetting indicated above
+         *  NB: It is assumed that the supplied init file is written in standard units so
+         *  conversion to reduced units is applied
          *
-         * *filename:   pointer to the name of the initialization .txt file
-         */
+         *  *filename:   pointer to the name of the initialization .txt file
+        \*/
 
         FILE *initfile = NULL;
         int i = 0;
@@ -373,7 +383,6 @@ void readInit(char *filename)
                 }
                 particles = malloc(N * sizeof(*particles));
                 particlesCopy = malloc(N * sizeof(*particlesCopy));
-                clustersLog = malloc(N * sizeof(*clustersLog));
 
                 // Read value of box size
                 if (fscanf(initfile, "%lf %*f %*f%*c", &L) != 1)
@@ -425,16 +434,16 @@ void readInit(char *filename)
 
 void writeCoords(char *filename)
 {
-        /*
-         * Function:    writeCoords
-         * -------------------------
-         * Writes the position, radius, and type data for all N
-         * particles in a .sph file; standard units are used
-         * NB: Writing is done using the typesetting indicated above
+        /*\
+         *  Function:    writeCoords
+         *  -------------------------
+         *  Writes the position, radius, and type data for all N
+         *  particles in a .sph file; standard units are used
+         *  NB: Writing is done using the typesetting indicated above
          *
-         * *filename:   pointer to the name of the output .sph file
-         *
-         */
+         *  *filename:   pointer to the name of the output .sph file
+        \*/
+
         FILE *outfile = NULL;
         int i = 0;
         double boxSize = L * sigma;
@@ -460,18 +469,19 @@ void writeCoords(char *filename)
 
 int particleMove(double particleStepTune)
 {
-        /*
-         * Function: particleMove                
-         * ---------------------
-         * Tries to move a randomly selected particle in space by a small amount
-         * and checks for overlap
-         * If there is no overlap, overwrites the previous particle position
-         * with the new one
+        /*\
+         *  Function: particleMove                
+         *  ---------------------
+         *  Tries to move a randomly selected particle in space by a small amount
+         *  and checks for overlap
+         *  If there is no overlap, overwrites the previous particle position
+         *  with the new one
          *
-         * particleStepTune:    tuning factor for particle step size
+         *  particleStepTune:    tuning factor for particle step size
          *
-         * return:              0 if attempt failed, 1 if attempt succeeded
-         */ 
+         *  return:              0 if attempt failed, 1 if attempt succeeded
+        \*/ 
+        
         // Generate random displacements in x, y, z
         double delta[3] = {(genrand() - 0.5) / sigma * (particleStepTune),
                            (genrand() - 0.5) / sigma * (particleStepTune),
@@ -509,16 +519,17 @@ int particleMove(double particleStepTune)
 
 int volumeMove(double volumeStepTune)
 {
-        /*
-         * Function:    volumeMove
-         * -----------------------
-         * Attempts to change the volume of the simulation box by a small
-         * amount according to the known acceptance rule
+        /*\
+         *  Function:    volumeMove
+         *  -----------------------
+         *  Attempts to change the volume of the simulation box by a small
+         *  amount according to the known acceptance rule
          * 
-         * volumeStepTune:      tuning factor for volume step size
+         *  volumeStepTune:      tuning factor for volume step size
          *
-         * return:              0 if attempt failed, 1 if attempt succeeded
-         */
+         *  return:              0 if attempt failed, 1 if attempt succeeded
+        \*/
+        
         // Generate random volume change, define new adequate quantities
         double  vol = L * L * L,
                 delta[2] = {(genrand() - 0.5) / (sigma) * (volumeStepTune),
@@ -596,18 +607,19 @@ int volumeMove(double volumeStepTune)
 
 double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate)
 {
-        /*
-         * Function:    tuneStepSize
-         * -------------------------
-         * Tunes the step size for volume or particle moves by +-2% depending
-         * on whether the success rate is above or below the specified
-         * acceptance rate
+        /*\
+         *  Function:   tuneStepSize
+         *  -------------------------
+         *  Tunes the step size for volume or particle moves by +-2% depending
+         *  on whether the success rate is above or below the specified
+         *  acceptance rate
          *
-         * NSuccess:    number of successes over the last nCycles cyles
-         * acceptanceRate:      targeted acceptance rate
-         * nCycles:     number of cycles to average the number of successes over
+         *  NSuccess:           number of successes over the last nCycles cyles
+         *  acceptanceRate:     targeted acceptance rate
+         *  nCycles:            number of cycles to average the number of successes over
          *
-         */
+        \*/
+
         if (nSuccess - (int) (acceptanceRate * nCycles) > 0)
                 return 1.02;
         else
@@ -616,64 +628,16 @@ double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate)
 
 
 
-void stepTuneWrapper(int MCCycle, double acceptanceRate)
-{
-        /*
-         * Function:    stepTuneWrapper
-         * ----------------------------
-         * Wraper for the first half of the simulation (i.e. MCCycle / 2 cycles)
-         * during which not measurements are made and system is left to evolve
-         * with tuning of the step size in volumeMove() and particleMove() to
-         * reach the targetted acceptanceRate success rate
-         *
-         * MCCycle:     total number of MC cycles of the simulation
-         * acceptanceRate:      targeted success rate for volumeMove() and
-         *                      particleMove()
-         */
-        int i = 1,
-            j = 0,
-            sV = 0,                             // number of volumeMove() successes
-            sP = 0,                             // number of particleMove() successes
-            rPstep = 10000,                     // number of MC cycles before tuning particle step size
-            rVstep = (N + 1) * rPstep;          // number of MC cycles before tuning volume step size
-        double q = 0.0f,
-               volumeStepTune = 1.0f,           // tune factor for volume step size
-               particleStepTune = 1.0f;         // tune factor for particle step size
-        for (i = 1; i < MCCycle + 1; i++)
-        {
-                for (j = 0; j < N; j++)
-                {
-                        q = genrand();
-                        if (q < (1.0f / (float) (N + 1)))
-                                sV += volumeMove(volumeStepTune);
-                        else
-                                sP += particleMove(particleStepTune);
-                }
-                if (i % rPstep == 0)
-                {
-                        sanityCheck();
-                        particleStepTune *= tuneStepSize(sP, rPstep, acceptanceRate);
-                        sP = 0;
-                }
-                if (i % rVstep == 0)
-                {
-                        volumeStepTune *= tuneStepSize(sV, rVstep, acceptanceRate);
-                        sV = 0;
-                }
-        }
-}
-
-
-
 double measurePF(void)
 {
-        /*
-         * Function: measurePF
-         * -------------------
-         * Computes the reduced packing fraction for the given parameters
+        /*\
+         *  Function:   measurePF
+         *  -------------------
+         *  Computes the reduced packing fraction for the given parameters
          *
-         * return:     reduced packing fraction
-         */
+         *  return:     reduced packing fraction
+        \*/
+        
         double PF = (double) N * sigma * sigma * sigma * M_PI / (6.0f * L * L * L);
         return PF;
 }
@@ -686,6 +650,7 @@ int updateSingleCL(Particle *one)
         int u = one->x / sCell1D,
             v = one->y / sCell1D,
             w = one->z / sCell1D;
+        
         // Remove particle from old CL
         if (CLTable[index] == one)
                 CLTable[index] = one->next;
@@ -693,15 +658,18 @@ int updateSingleCL(Particle *one)
                 one->next->prev = one->prev;
         if (one->prev != NULL)
                 one->prev->next = one->next;
+        
         // Fetches the index of the new CL
         index = retrieveIndex(u, v, w);
         one->CLindex = index;
+        
         // Place particle on top of new CL
         one->prev = NULL;
         one->next = CLTable[index];
         if (CLTable[index] != NULL)
                 CLTable[index]->prev = one;
         CLTable[index] = one;
+        
         return 0;
 }
 
@@ -709,12 +677,13 @@ int updateSingleCL(Particle *one)
 
 int buildCL(int usecase)
 {
-        /* Function:    buildCL
-         * --------------------
-         * Builds, updates, and expands cell lists and their table according to
-         * the new state of the system
+        /*\
+         *  Function:   buildCL
+         *  --------------------
+         *  Builds, updates, and expands cell lists and their table according to
+         *  the new state of the system
          *
-         * usecase:     choice of what operation to perform on CL among:
+         *  usecase:    choice of what operation to perform on CL among:
          *              + 1:    initialization of the CL table and CLs
          *                      contents
          *              + 2:    update of the CLs contents only, no
@@ -725,8 +694,9 @@ int buildCL(int usecase)
          *                      of the previously allocated memory is used in
          *                      this particular case
          *
-         * return:      0 for normal termination
-         */
+         * r eturn:     0 for normal termination
+        \*/
+
         switch (usecase)
         {
                 case 1:         // former initCL()
@@ -791,18 +761,18 @@ int buildCL(int usecase)
 int retrieveIndex(int u, int v, int w)
 {
         /*\
-         *  Function:    retrieveIndex
+         *  Function:   retrieveIndex
          *  --------------------------
          *  Retrieves index of the cell (from the table of CLs) to which a
          *  particle belongs based on the coordinates of the CL in the 3D
          *  coordinate system of the CL table; corresponds of a flattening
          *  operation of the CL index from a 3D view to standard 1D view
          *
-         *  u:   x-coordinate of the cell
-         *  v:   y-coordinate of the cell
-         *  w:   z-coordinate of the cell
+         *  u:          x-coordinate of the cell
+         *  v:          y-coordinate of the cell
+         *  w:          z-coordinate of the cell
          *
-         *  return:      index of the CL in the table of CLs
+         *  return:     index of the CL in the table of CLs
         \*/
 
         int index = 0;
@@ -978,8 +948,7 @@ void update_nblistp_sann(int p)
         
         // FINDING NEAREST NEIGHBORS USING CUTOFF RADIUS
         // ---------------------------------------------
-
-        //printf("Nearest neighbours of particle #%d are:\n", p);
+        /*
         for (int i = 0; i < MAX_NEIGHBORS; i++) 
         {
                 posnb* nb = neighbours+i;
@@ -1000,10 +969,51 @@ void update_nblistp_sann(int p)
                                 bnd->si = dy * dxy;
                                 bnd->co = dx * dxy;
                         }
-                        //printf("#%d - d2 = %lf, dz = %lf, nz = %lf\n", bnd->n, dx*dx+dy*dy+dz*dz, dz, bnd->nz);
                 }
         }
-        //printf("\n");
+        */
+
+        // FINDING NEAREST NEIGHBORS USING SANN
+        // ------------------------------------
+        int m = 3; 
+        int done = 0;
+        while (!done)
+        {
+                double rim = 0;
+                for (int i = 0; i < m; i++)
+                        rim += neighbours[i].dist / (m - 2);
+                if (rim > neighbours[m].dist)
+                        m++;
+                else 
+                        done = 1;
+                if (m > numposnb)
+                { 
+                        printf("NN algorithm did not converge!\n");
+                        m--;
+                        done = 1;
+                }
+        }
+
+        // can redefine m at this point if we want to use only, e.g., the first 12 NN
+        // m = 12;
+        for (int i = 0; i < m; i++)
+        {
+                posnb* nb = neighbours+i;
+                id = nb->part->index;
+                dx = nb->dx;
+                dy = nb->dy;
+                dz = nb->dz;
+                di = 1.0 / (nb->dist);
+                bnd = &(blist[p].bnd[blist[p].n]);
+                blist[p].n++;
+                bnd->n = id;
+                bnd->nz = dz * di;
+                dxy = 1.0 / sqrt(dx * dx + dy * dy);
+                bnd->si = dy * dxy;
+                bnd->co = dx * dxy;
+        }
+
+
 }
 
 
@@ -1378,7 +1388,7 @@ int calc_clusters(int* conn, compl* orderp)
         int cs,
             cn = 1,
             big = 0;
-        int bc = -1;
+        //int bc = -1;
         const int l = 6;
         
         // functions
@@ -1421,20 +1431,27 @@ int calc_clusters(int* conn, compl* orderp)
                         if(cs > big)
                         { 
                                 big = cs;
-                                bc = cn;
+                                //bc = cn;
                         }
                         cn++;
                 }
         }
   
-        // calculate average cluster size
         int tcs = 0;                            // total number of particles in a cluster
+        countLog = 0;
         for(int i = 0 ; i < cn ; i++)           // loop over all clusters
         {
                 tcs += size[i];
                 if (size[i] != 0)
-                        clustersLog[size[i]] += 1.0f;
+                {
+                        //printf("N = %d\n", N);
+                        //printf("size[%d] = %d\n", i, size[i]);
+                        clustersLog[size[i]]++;
+                        if (clustersLog[size[i]] == 1)
+                                countLog++;
+                }
         }
+        *clustersLogCopy = *clustersLog;
 
         //printf("%i clusters, Max clustersize %i, percentage of crystalline particles %f\n", cn-1, big, tcs / (double) N);
 
@@ -1481,7 +1498,7 @@ double Ubias(int sizeClus)
          *  return:     bias potential for the aforementioned cluster size
         \*/
 
-        double w =0.0f;
+        double w = 0.0f;
         w = 0.5f * k * ((double) sizeClus - (double) n0) * ((double) sizeClus - (double) n0);
         return w;
 
@@ -1498,6 +1515,9 @@ void trajectory(void)
        
         double proba = genrand();
         double rule = 0.0f;
+        clustersLog = malloc(N * sizeof(*clustersLog));
+        memset(clustersLog, (int) 0.0, sizeof(*clustersLog) * N);
+        clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
 
         // computes new trajectory
         for (int i = 0; i < trajectoryLength; i ++)
@@ -1508,10 +1528,11 @@ void trajectory(void)
         maxClus = findClusters();
         potBias = Ubias(maxClus);
         // accept or reject trajectory based on biased potential
-        rule = exp(- 1 / kB / T * (potBiasOld - potBias));
+        rule = exp(- 1.0f / kB / T * (potBiasOld - potBias));
         if (proba > rule)
         {// reject trajectory
                 *particles = *particlesCopy;
+                *clustersLog = *clustersLogCopy;
                 buildCL(2);
         }
         else
@@ -1519,9 +1540,100 @@ void trajectory(void)
                 maxClusOld = maxClus;
                 potBiasOld = potBias;
                 *particlesCopy = *particles;
+                *clustersLogCopy = *clustersLog;
         }
 
-        // clustersLog must be saved at this point, as well as maxClus
+        // clustersLog can be saved at this point
+        FILE *saveclusters = fopen(clusterlog_filename, "a");
+        if (saveclusters != NULL)
+        {
+                fprintf(saveclusters, "&%d\n", countLog);
+                for (int i = 0; i < N; i++)
+                {
+                        if (clustersLog[i] != 0)
+                                fprintf(saveclusters, "%d\t%d\n", i, clustersLog[i]);
+                }
+        }
+        free(clustersLog);
+}
+
+
+
+void relaxation(int nTrajectory)
+{
+        /*\
+         *  Function: relaxation
+         *  --------------------
+         *  Relaxes the system without taking measurements for nTrajectory
+         *  trajectories
+         *
+         *  nTrajectory:        number of trajectories to relax the system for
+        \*/
+
+        double proba[2] = {0.0f, genrand()};
+        double rule = 0.0f;
+        double volumeStepTune = 1.0f;                   // tuning factor for volume step size
+        double particleStepTune = 1.0f;                  // tuning factor for particle step size
+        int sV = 0;                                     // # of volumeMove() successes                       
+        int sP = 0;                                     // # of particleMove() successes
+        int rPstep = 500;                               // # of trajectories before tuning particle step size
+        int rVstep = (N + 1) * rPstep;                  // # of trajectories before tuning volume step size
+
+        // performs nTrajectory trajectories
+        for (int i = 0; i < nTrajectory; i++)
+        {
+                clustersLog = malloc(N * sizeof(*clustersLog));
+                memset(clustersLog, (int) 0.0, sizeof(*clustersLog) * N);
+                clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
+
+                // performs 1 trajectory
+                for (int j = 0; j < trajectoryLength; j++)
+                {
+                        for (int k = 0; k < N; k++)
+                        {
+                                proba[0] = genrand();
+                                if (proba[0] < (1.0f / (float) (N + 1)))
+                                        sV += volumeMove(volumeStepTune);
+                                else
+                                        sP += particleMove(particleStepTune);
+                        }
+                }
+
+                // tunes acceptance rate when necessary
+                if (i % rPstep == rPstep-1)
+                {
+                        sanityCheck();
+                        particleStepTune *= tuneStepSize(sP, rPstep, targetedAcceptanceRate);
+                        sP = 0;
+                }
+                if (i % rVstep == rVstep-1)
+                {
+                        volumeStepTune *= tuneStepSize(sV, rVstep, targetedAcceptanceRate);
+                        sV = 0;
+                }
+
+                // compute table of clusters, find largest cluster & need to keep track of it
+                maxClus = findClusters();
+                potBias = Ubias(maxClus);
+
+                // accept or reject trajectory based on biased potential
+                rule = exp(- 1 / kB / T * (potBiasOld - potBias));
+                if (proba[1] > rule)
+                {// reject trajectory
+                        *particles = *particlesCopy;
+                        *clustersLog = *clustersLogCopy;
+                        buildCL(2);
+                }
+                else
+                {// accept trajectory
+                        maxClusOld = maxClus;
+                        potBiasOld = potBias;
+                        *particlesCopy = *particles;
+                        *clustersLogCopy = *clustersLog;
+                }
+                
+                free(clustersLog);
+        }
 }
 
 
@@ -1531,74 +1643,73 @@ void trajectory(void)
 int main(int argc, char *argv[])
 {
         // INPUT
-        // -----
-        if (argc > 2)
-        {
-                int choice_param = strtol(argv[1], NULL, 10);
-                double val_param = strtod(argv[2], NULL);
-                sprintf(init_filename, "initConfig_%d_%.5lf.sph", choice_param, val_param);
-                sprintf(snap_filename, "snapshotsMC_%d_%.5lf.sph", choice_param, val_param);
-        }
+        if (argc == 2)
+                init_filename = argv[1];
         else
         {
-                printf("ERROR: too few arguments\n");
+                printf("ERROR: no input filename specified\n");
                 exit(0);
         }
 
-       
+        // PARSING INPUT
+        if (sscanf(init_filename, "init_configs/n%d_PF%lf.sph", &N, &PF) != 2)
+        {
+                printf("Error: could not parse string\n");
+                exit(0);
+        }
 
-        // OUTPUT FILES CLEASNING
-        // ----------------------
-        // particles coordinates - not needed atm, if snapshots prove to be sufficient, maybe only print last image of the system, similar to wht Frank's doing
-        // ~~~~~~~~~~~~~~~~~~~~~~
-        //char *outfilename = "coords.sph";
-        //FILE *outfile = fopen(outfilename, "w+");
-        //if (outfile != NULL)
-        //        fclose(outfile);
-        // density - not needed atm
-        // ~~~~~~~~~~~~~~~~~~~~~~
-        //char *densityfilename = "density.txt";
-        //FILE *densityoutfile = fopen(densityfilename, "w+");
-        //if (densityoutfile != NULL)
-        //        fclose(densityoutfile);
-        // snapshots
-        // ~~~~~~~~~~~~~~~~~~~~~~
-        //char *snapcoords = "snap_coords.sph";
-        //FILE *snap1 = fopen(snapcoords, "w+");
-        FILE *snap1 = fopen(snap_filename, "w+");
-        if (snap1 != NULL)
-                fclose(snap1);
-        //char *snaprho = "snap_density.txt";
-        //FILE *snap2 = fopen(snaprho, "w+");
-        //if (snap2 != NULL)
-        //        fclose(snap2);
-        // others
-        // ~~~~~~~~~~~~~~~~~~~~~~
-        FILE *writefile = NULL;
+        // OUTPUT
+        if (sprintf(clusterlog_filename, "./clusters_data/clusters_n%d_P%.2lf.txt", N, P) < 0)
+        {
+                printf("[US] Could not write string. Exit.\n");
+                exit(0);
+        }
+        if (sprintf(lastsnap_filename, "./snapshots/last_n%d_P%.2lf.sph", N, P) < 0)
+        {
+                printf("[US] Could not write string. Exit.\n");
+                exit(0);
+        }
+        printf("%s\n", lastsnap_filename);
 
+        // VARIABLES
+        int halfSimtime = MCCycle / trajectoryLength / 2;
+        printf("halfSimtime = %d\n", halfSimtime);
+
+
+        // OUTPUT FILES CLEANING
+        FILE *writefile = fopen(clusterlog_filename, "w+");
+        if (writefile != NULL)
+                fclose(writefile);
 
 
         // SYSTEM INITIALIZATION        
         init_genrand(randseed);
         readInit(init_filename);
         buildCL(1);
+
+        clustersLog = malloc(N * sizeof(*clustersLog));
+        memset(clustersLog, (int) 0.0f, sizeof(*clustersLog) * N);
+        clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
+
         maxClusOld = findClusters();
         potBiasOld = Ubias(maxClusOld);
-        //writeCoords(outfilename);
 
+        // BODY
+        relaxation(halfSimtime);
         
-        // must calculate size of the largest cluster in the initial configuration of the system (as maxClusOld)
-        for (int i = 0; i < (MCCycle / trajectoryLength); i++)
+        for (int i = 0; i < halfSimtime; i++)
         {
                 trajectory();
-                // output size of largest nucleus
-                // if needed, print a snapshot with, e.g., PF, clusters table, ...
+                printf("Completed traj. #%d\n", i);
         }
+
+
+        // END
+        writeCoords(lastsnap_filename);
 
         free(CLTable);
         free(particles);
         free(particlesCopy);
-        free(clustersLog);
 
         printf("MC simulation terminated normally\n"); 
         return 0;

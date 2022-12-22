@@ -1,8 +1,14 @@
 CC = gcc
 
-CFLAGS = -Wall -Ofast -funroll-loops
+CFLAGS = -Wall -Ofast -g
 
 LIBS = -lm
 
-us: main.c
-	$(CC) $(CFLAGS) main.c -o output $(LIBS)
+all: umbrella energy
+
+umbrella: umbrella.c Makefile
+	$(CC) $(CFLAGS) umbrella.c -o umbrella $(LIBS)
+
+energy: computeDGn.c Makefile
+	$(CC) $(CFLAGS) computeDGn.c -o computeDGn $(LIBS)
+
