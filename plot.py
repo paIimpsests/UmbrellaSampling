@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 ### Free energy barrier
 n = np.empty([])
 DGn = np.empty([])
-n, DGn = np.loadtxt("DGn_data/DGn_n10000_P16.00.txt", delimiter="\t", unpack=True)
+n, DGn = np.loadtxt("DGn_data/DGn_n2000_P17.00.txt", delimiter="\t", unpack=True)
 
 fig, ax =plt.subplots()
 ax.scatter(n, DGn, marker="s")
@@ -22,7 +22,7 @@ plt.show()
 ### Max cluster size evolution
 i = np.empty([])
 n_i = np.empty([])
-i, n_i = np.loadtxt("n_data/n_n10000_P16.00.txt", delimiter="\t", unpack=True)
+i, n_i = np.loadtxt("n_data/n_n2000_P17.00.txt", delimiter="\t", unpack=True)
 
 fig, ax =plt.subplots()
 #ax.plot(i, n_i, marker="o", linestyle="")
