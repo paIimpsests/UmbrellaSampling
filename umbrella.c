@@ -93,7 +93,8 @@ void trajectory(void);
 // -----------------------
 int N = 0;                              // [READ FROM IMPUT] number of particles in the system
 double L = 0.0f;                        // [READ FROM INPUT] reduced box size
-double P = 16.0f;                       // [TUNABLE] reduced pressure --- only relevant for NPT
+double LOld = 0.0f;                     // backup copy of the above
+double P = 15.0f;                       // [TUNABLE] reduced pressure --- only relevant for NPT
 double sigma = 1.0f;                    // unit of length = 1 = max particle size
 double PF = 0.0f;                       // [CALCULATED] system packing fraction
 double rho = 0.0f;                      // [CALCULATED] reduced number density
@@ -143,7 +144,7 @@ char* init_filename;                    // name of the initial configuration inp
 char lastsnap_filename[200];            // name of the last snapshot output file
 char movie_filename[200];               // name of the movie output file
 char clusterlog_filename[200];          // name of the clusters log output file
-int makeamovie = 0;                     // choice to make a movie of snapshots taken after each trajectory
+int makeamovie = 1;                     // choice to make a movie of snapshots taken after each trajectory
 
 
 
@@ -416,6 +417,7 @@ void readInit(char *filename)
                 // Rescale everything w.r.t. larger particle size to obtain the
                 // expected max sigma = 1, also converts to reduced units
                 L /= (2.0f * rTemp);
+                LOld = L;
                 for (i = 0; i < N; i++)
                 {
                         particles[i].x /= (2.0f * rTemp);
@@ -1690,14 +1692,16 @@ void trajectory(void)
                 {
                         clustersLog[j] = clustersLogCopy[j];
                 }
-                buildCL(2);             // probably overkill as particles tables is the CL table
+                // copies backup of box size
+                L = LOld;
+                buildCL(3);
         }
         else
         {// accept trajectory
                 printf("trajectory accepted!\n");
                 maxClusOld = maxClus;
                 potBiasOld = potBias;
-                // backup of configuration
+                // backup of new configuration
                 for (int j = 0; j < N; j++)
                 {
                         particlesCopy[j].x = particles[j].x;
@@ -1710,11 +1714,13 @@ void trajectory(void)
                         particlesCopy[j].CLindex = particles[j].CLindex;
                         particlesCopy[j].index = particles[j].index;
                 }
-                // backup of clusters log
+                // backup of new clusters log
                 for (int j = 0; j < N; j++)
                 {
                         clustersLogCopy[j] = clustersLog[j];
                 }
+                // backup of new box size
+                LOld = L;
 
         }
 
@@ -1749,7 +1755,7 @@ void relaxation(int nTrajectory)
         double proba[2] = {0.0f, genrand()};
         double rule = 0.0f;
         double volumeStepTune = 1.0f;                   // tuning factor for volume step size
-        double particleStepTune = 1.0f;                  // tuning factor for particle step size
+        double particleStepTune = 1.0f;                 // tuning factor for particle step size
         int sV = 0;                                     // # of volumeMove() successes                       
         int sP = 0;                                     // # of particleMove() successes
         int rPstep = 500;                               // # of trajectories before tuning particle step size
@@ -1758,6 +1764,7 @@ void relaxation(int nTrajectory)
         // performs nTrajectory trajectories
         for (int i = 0; i < nTrajectory; i++)
         {
+                printf("traj. #%d\n", i);
                 clustersLog = malloc(N * sizeof(*clustersLog));
                 memset(clustersLog, (int) 0.0, sizeof(*clustersLog) * N);
                 //clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
@@ -1774,7 +1781,7 @@ void relaxation(int nTrajectory)
                                         sP += particleMove(particleStepTune);
                         }
                 }
-                sanityCheck();
+                //sanityCheck();          // SOMETHING IS HAPPENING HERE
 
                 // tunes acceptance rate when necessary
                 if (i % rPstep == rPstep-1)
@@ -1812,18 +1819,20 @@ void relaxation(int nTrajectory)
                                 particles[j].index = particlesCopy[j].index;
                         }
                         // copies backup of clusters log -- no need during relaxation: no outputting of clustersLog 
-                        //for (int j = 0; j < N; j++)
-                        //{
-                        //        clustersLog[i] = clustersLogCopy[i];
-                        //}
-                        buildCL(2);             // probably overkill as particles tables is the CL table
+                        for (int j = 0; j < N; j++)
+                        {
+                                clustersLog[j] = clustersLogCopy[j];
+                        }
+                        // copies backup of box size
+                        L = LOld;
+                        buildCL(3);
                 }
                 else
                 {// accept trajectory
                         printf("trajectory accepted!\n");
                         maxClusOld = maxClus;
                         potBiasOld = potBias;
-                        // backup of configuration
+                        // backup of new configuration
                         for (int j = 0; j < N; j++)
                         {
                                 particlesCopy[j].x = particles[j].x;
@@ -1836,14 +1845,17 @@ void relaxation(int nTrajectory)
                                 particlesCopy[j].CLindex = particles[j].CLindex;
                                 particlesCopy[j].index = particles[j].index;
                         }
-                        // backup of clusters log
+                        // backup of new clusters log
                         for (int j = 0; j < N; j++)
                         {
                                 clustersLogCopy[j] = clustersLog[j];
                         }
+                        // backup of new box size
+                        LOld = L;
                 }
                 if (makeamovie)
                         writeCoords(movie_filename);
+                sanityCheck();
                 free(clustersLog);
         }
 }
@@ -1871,17 +1883,17 @@ int main(int argc, char *argv[])
         }
 
         // OUTPUT
-        if (sprintf(clusterlog_filename, "./clusters_data/clusters_n%d_P%.2lf.txt", N, P) < 0)
+        if (sprintf(clusterlog_filename, "./clusters_data/clusters_n%d_P%.2lf_k%.2lf.txt", N, P, k) < 0)
         {
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(lastsnap_filename, "./snapshots/last_n%d_P%.2lf.sph", N, P) < 0)
+        if (sprintf(lastsnap_filename, "./snapshots/last_n%d_P%.2lf_k%.2lf.sph", N, P, k) < 0)
         {
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(movie_filename, "./snapshots/movie_n%d_P%.2lf.sph", N, P) < 0)
+        if (sprintf(movie_filename, "./snapshots/movie_n%d_P%.2lf_k%.2lf.sph", N, P, k) < 0)
         {
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
@@ -1920,6 +1932,7 @@ int main(int argc, char *argv[])
         clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
 
         maxClusOld = findClusters_init();
+        //maxClusOld = findClusters();
         potBiasOld = Ubias(maxClusOld);
 
         // BODY
