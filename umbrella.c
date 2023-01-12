@@ -266,6 +266,8 @@ int overlapCheckGlobal(void)
                 while ((overlap == 0) && (m < N))
                 {
                         overlap = (n != m) * overlapCheck(particles+n, particles+m);
+                        if (overlap)
+                                printf("[OVERLAP] #%d & #%d\n", (particles+n)->index, (particles+m)->index);
                         m++;
                 }
                 m = n;
@@ -316,11 +318,11 @@ int overlapCheckCL(int n)
         int c = particles[n].z / sCell1D;
         int index;
         Particle *current = NULL;
-        for (int i = a-1; i < a+2; i++)
+        for (int i = a-2; i < a+3; i++)
         {        
-                for (int j = b-1; j < b+2; j++)
+                for (int j = b-2; j < b+3; j++)
                 {
-                        for (int k = c-1; k < c+2; k++)
+                        for (int k = c-2; k < c+3; k++)
                         {
                                 index = retrieveIndex(i,j,k);
                                 current = CLTable[index];
@@ -348,6 +350,7 @@ void sanityCheck(void)
         
         if (overlapCheckGlobal())
         {
+                writeCoords(movie_filename);
                 printf("Something is VERY wrong... There's overlap...\n");
                 exit(0);
         }
@@ -1661,10 +1664,10 @@ void trajectory(void)
         //clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
 
         // computes new trajectory
-        for (int i = 0; i < trajectoryLength; i ++)
+        for (int i = 0; i < trajectoryLength; i++)
         {
                 cycle();
-                sanityCheck();
+                sanityCheck();          // SOMETHING IS HAPPENING HERE (SAME AS BELOW)
         }
         // compute table of clusters, find largest cluster & need to keep track of it
         maxClus = findClusters();
@@ -1673,7 +1676,7 @@ void trajectory(void)
         rule = exp(potBiasOld - potBias);
         if (proba > rule)
         {// reject trajectory
-                printf("trajectory rejected!\n");
+                //printf("trajectory rejected!\n");
                 // copies configuration backup
                 for (int j = 0; j < N; j++)
                 {
@@ -1682,8 +1685,8 @@ void trajectory(void)
                         particles[j].z = particlesCopy[j].z;
                         particles[j].r = particlesCopy[j].r;
                         particles[j].type = particlesCopy[j].type;
-                        particles[j].next = particlesCopy[j].next;              // can cause problems
-                        particles[j].prev = particlesCopy[j].prev;              // can cause problems
+                        particles[j].next = particlesCopy[j].next;              
+                        particles[j].prev = particlesCopy[j].prev;              
                         particles[j].CLindex = particlesCopy[j].CLindex;
                         particles[j].index = particlesCopy[j].index;
                 }
@@ -1694,11 +1697,11 @@ void trajectory(void)
                 }
                 // copies backup of box size
                 L = LOld;
-                buildCL(3);
+                buildCL(1);
         }
         else
         {// accept trajectory
-                printf("trajectory accepted!\n");
+                //printf("trajectory accepted!\n");
                 maxClusOld = maxClus;
                 potBiasOld = potBias;
                 // backup of new configuration
@@ -1709,8 +1712,8 @@ void trajectory(void)
                         particlesCopy[j].z = particles[j].z;
                         particlesCopy[j].r = particles[j].r;
                         particlesCopy[j].type = particles[j].type;
-                        particlesCopy[j].next = particles[j].next;              // can cause problems
-                        particlesCopy[j].prev = particles[j].prev;              // can cause problems
+                        particlesCopy[j].next = particles[j].next;              
+                        particlesCopy[j].prev = particles[j].prev;              
                         particlesCopy[j].CLindex = particles[j].CLindex;
                         particlesCopy[j].index = particles[j].index;
                 }
@@ -1764,7 +1767,7 @@ void relaxation(int nTrajectory)
         // performs nTrajectory trajectories
         for (int i = 0; i < nTrajectory; i++)
         {
-                printf("traj. #%d\n", i);
+                //printf("traj. #%d\n", i);
                 clustersLog = malloc(N * sizeof(*clustersLog));
                 memset(clustersLog, (int) 0.0, sizeof(*clustersLog) * N);
                 //clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
@@ -1804,7 +1807,7 @@ void relaxation(int nTrajectory)
                 rule = exp(potBiasOld - potBias);
                 if (proba[1] > rule)
                 {// reject trajectory
-                        printf("trajectory rejected!\n");
+                        //printf("trajectory rejected!\n");
                         // copies configuration backup
                         for (int j = 0; j < N; j++)
                         {
@@ -1825,11 +1828,11 @@ void relaxation(int nTrajectory)
                         }
                         // copies backup of box size
                         L = LOld;
-                        buildCL(3);
+                        buildCL(1);
                 }
                 else
                 {// accept trajectory
-                        printf("trajectory accepted!\n");
+                        //printf("trajectory accepted!\n");
                         maxClusOld = maxClus;
                         potBiasOld = potBias;
                         // backup of new configuration
@@ -1901,7 +1904,7 @@ int main(int argc, char *argv[])
 
         // VARIABLES
         int halfSimtime = MCCycle / trajectoryLength / 2;
-        printf("halfSimtime = %d\n", halfSimtime);
+        //printf("halfSimtime = %d\n", halfSimtime);
 
 
         // OUTPUT FILES CLEANING
@@ -1927,6 +1930,7 @@ int main(int argc, char *argv[])
                 writeCoords(movie_filename);
         buildCL(1);
 
+
         clustersLog = malloc(N * sizeof(*clustersLog));
         memset(clustersLog, (int) 0.0f, sizeof(*clustersLog) * N);
         clustersLogCopy = malloc(N * sizeof(*clustersLogCopy));
@@ -1936,18 +1940,18 @@ int main(int argc, char *argv[])
         potBiasOld = Ubias(maxClusOld);
 
         // BODY
-        printf("Relaxation\n");
+        //printf("Relaxation\n");
         relaxation(halfSimtime);
-        sanityCheck();
-        printf("passed sanity check\n\n Main loop\n");
+        //sanityCheck();
+        //printf("passed sanity check\n\n Main loop\n");
         
         for (int i = 0; i < halfSimtime; i++)
         {
                 trajectory();
-                sanityCheck();
+                //sanityCheck();
                 if (makeamovie)
                         writeCoords(movie_filename);
-                printf("Completed traj. #%d\n", i);
+                //printf("Completed traj. #%d\n", i);
         }
 
 
