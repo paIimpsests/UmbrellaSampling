@@ -14,7 +14,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
-#include <math.h>       // need to compile with `-lm` flag
+#include <math.h>               // need to compile with `-lm` flag
 #include <string.h>
 #include "mt19937ar.c"
 
@@ -42,8 +42,6 @@ typedef struct bndT bndT;
 typedef struct blistT blistT;
 typedef struct nlistT nlistT;
 typedef struct posnb posnb;
-
-
 // functions
 // ----------------
 int overlapCheck(Particle* one, Particle* two);
@@ -122,6 +120,7 @@ char snap_filename[100];                // name of the output file for snapshots
 int *clustersLog = NULL;                // log of the number of clusters of a given size
 int *clustersLogCopy = NULL;            // backup copy of the above 
 int countLog;                           // number of independent cluster sizes logged
+int countLogCopy;                       // backup copy of the above
 const double bndLength = 1.4f;          // [TUNABLE] distance cutoff for bonds, if used
 const double bndLengthSq = bndLength    // square of the distance cutoff for bonds
                      * bndLength;
@@ -145,6 +144,8 @@ char lastsnap_filename[200];            // name of the last snapshot output file
 char movie_filename[200];               // name of the movie output file
 char clusterlog_filename[200];          // name of the clusters log output file
 int makeamovie = 1;                     // choice to make a movie of snapshots taken after each trajectory
+
+int t = 0;
 
 
 
@@ -1602,6 +1603,7 @@ int calc_clusters_init(int* conn, compl* orderp)
         {
                 clustersLogCopy[i] = clustersLog[i];
         }
+        countLogCopy = countLog;
 
         //printf("%i clusters, Max clustersize %i, percentage of crystalline particles %f\n", cn-1, big, tcs / (double) N);
 
@@ -1673,7 +1675,7 @@ void trajectory(void)
         for (int i = 0; i < trajectoryLength; i++)
         {
                 cycle();
-                sanityCheck();          // SOMETHING IS HAPPENING HERE (SAME AS BELOW)
+                sanityCheck();          // do checkes every 2/3 cycles + track acceptance rate and tweak if need be
         }
         // compute table of clusters, find largest cluster & need to keep track of it
         maxClus = findClusters();
@@ -1682,7 +1684,7 @@ void trajectory(void)
         rule = exp(potBiasOld - potBias);
         if (proba > rule)
         {// reject trajectory
-                //printf("trajectory rejected!\n");
+                printf("trajectory rejected!\n");
                 // copies configuration backup
                 for (int j = 0; j < N; j++)
                 {
@@ -1701,13 +1703,14 @@ void trajectory(void)
                 {
                         clustersLog[j] = clustersLogCopy[j];
                 }
+                countLog = countLogCopy;
                 // copies backup of box size
                 L = LOld;
                 buildCL(1);
         }
         else
         {// accept trajectory
-                //printf("trajectory accepted!\n");
+                printf("trajectory accepted!\n");
                 maxClusOld = maxClus;
                 potBiasOld = potBias;
                 // backup of new configuration
@@ -1728,6 +1731,7 @@ void trajectory(void)
                 {
                         clustersLogCopy[j] = clustersLog[j];
                 }
+                countLogCopy = countLog;
                 // backup of new box size
                 LOld = L;
 
@@ -1737,12 +1741,13 @@ void trajectory(void)
         FILE *saveclusters = fopen(clusterlog_filename, "a");
         if (saveclusters != NULL)
         {
-                fprintf(saveclusters, "&%d\n", countLog);
+                fprintf(saveclusters, "t-%d\n&%d\n", t, countLog);
                 for (int i = 0; i < N; i++)
                 {
                         if (clustersLog[i] != 0)
                                 fprintf(saveclusters, "%d\t%d\n", i, clustersLog[i]);
                 }
+                fclose(saveclusters);
         }
 
         free(clustersLog);
@@ -1832,6 +1837,7 @@ void relaxation(int nTrajectory)
                         {
                                 clustersLog[j] = clustersLogCopy[j];
                         }
+                        countLog = countLogCopy;
                         // copies backup of box size
                         L = LOld;
                         buildCL(1);
@@ -1859,11 +1865,12 @@ void relaxation(int nTrajectory)
                         {
                                 clustersLogCopy[j] = clustersLog[j];
                         }
+                        countLogCopy = countLog;
                         // backup of new box size
                         LOld = L;
                 }
-                if (makeamovie)
-                        writeCoords(movie_filename);
+                //if (makeamovie)
+                //        writeCoords(movie_filename);
                 sanityCheck();
                 free(clustersLog);
         }
@@ -1951,13 +1958,13 @@ int main(int argc, char *argv[])
         //sanityCheck();
         //printf("passed sanity check\n\n Main loop\n");
         
-        for (int i = 0; i < halfSimtime; i++)
+        for (t = 0; t < halfSimtime; t++)
         {
                 trajectory();
                 //sanityCheck();
                 if (makeamovie)
                         writeCoords(movie_filename);
-                //printf("Completed traj. #%d\n", i);
+                printf("Completed traj. #%d\n", t);
         }
 
 
