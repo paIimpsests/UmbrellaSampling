@@ -50,7 +50,7 @@ int overlapCheckGlobalCL(void);
 int overlapCheckCL(int n);
 void sanityCheck();
 void readInit(char *filename);
-void writeCoords(char *filename);
+void writeCoords(char *filename, int fluidlike);
 int particleMove(double particleStepTune);
 int volumeMove(double volumeStepTune);
 double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate);
@@ -100,7 +100,7 @@ Particle *particles = NULL;             // [READ FROM INPUT] pointer to the tabl
 Particle *particlesCopy = NULL;         // backup copy of the above
 // mc
 // -----------------------
-const int MCCycle = 400;            // [TUNABLE] number of cycles
+const int MCCycle = 4000;               // [TUNABLE] number of cycles
 int randseed = 848321;                  // [TUNABLE] seed for random number generator
 int trajectoryLength = 20;              // [TUNABLE] length of a trajectory, in number of cycles, must be a divider of MCCycle
 double targetedAcceptanceRate = 0.30f;  // [TUNABLE] targeted acceptance rate for particle moves and volume moves
@@ -110,11 +110,6 @@ Particle **CLTable = NULL;
 double sCell1D = 0.0f;
 int nCell1D = 0;
 int nCell = 0;
-// snapshots
-// -----------------------
-int nSnapshot = MCCycle / 2.0f / 20.0f; // [TUNABLE] targeted number of snapshots
-int cSnapshot = 0;                      // snapshot count
-char snap_filename[100];                // name of the output file for snapshots
 // bop
 // -----------------------
 int *clustersLog = NULL;                // log of the number of clusters of a given size
@@ -143,7 +138,8 @@ char* init_filename;                    // name of the initial configuration inp
 char lastsnap_filename[200];            // name of the last snapshot output file
 char movie_filename[200];               // name of the movie output file
 char clusterlog_filename[200];          // name of the clusters log output file
-int makeamovie = 1;                     // choice to make a movie of snapshots taken after each trajectory
+int makeamovie = 1;                     // [TUNABLE] choice to make a movie of snapshots taken after each trajectory
+int snapshots = 100;                    // [TUNABLE] number of snapshots for the movie
 
 int t = 0;
 
@@ -351,7 +347,6 @@ void sanityCheck(void)
         
         if (overlapCheckGlobal())
         {
-                writeCoords(movie_filename);
                 printf("Something is VERY wrong... There's overlap...\n");
                 exit(0);
         }
@@ -456,7 +451,7 @@ void readInit(char *filename)
 
 
 
-void writeCoords(char *filename)
+void writeCoords(char *filename, int fluidlike)
 {
         /*\
          *  Function:    writeCoords
@@ -465,26 +460,66 @@ void writeCoords(char *filename)
          *  particles in a .sph file; standard units are used
          *  NB: Writing is done using the typesetting indicated above
          *
-         *  *filename:   pointer to the name of the output .sph file
+         *  *filename:  pointer to the name of the output .sph file
+         *  fluidlike:  choice to print out fluid-like particles as small dots
+         *              for visualization purposes
         \*/
 
         FILE *outfile = NULL;
-        int i = 0;
         double boxSize = L * sigma;
         outfile = fopen(filename, "a");
         if (outfile != NULL)
         {
                 fprintf(outfile, "&%d\n", N);
                 fprintf(outfile, "%.12lf %.12lf %.12lf\n", boxSize, boxSize, boxSize);
-                for (i = 0; i < N; i++)
-                        fprintf(outfile,
-                                "%c %.12lf %.12lf %.12lf %.12lf\n",
-                                particles[i].type,
-                                particles[i].x * sigma,
-                                particles[i].y * sigma,
-                                particles[i].z * sigma,
-                                particles[i].r * sigma
-                               );
+                switch (fluidlike)
+                {
+                        case 0:
+                        {
+                                for (int i = 0; i < N; i++)
+                                {
+                                        fprintf(outfile,
+                                        "%c %.12lf %.12lf %.12lf %.12lf\n",
+                                        particles[i].type,
+                                        particles[i].x * sigma,
+                                        particles[i].y * sigma,
+                                        particles[i].z * sigma,
+                                        particles[i].r * sigma
+                                        );
+                                }
+                                break;
+                        }
+                        case 1:
+                        {
+                                for (int i = 0; i < N; i++)
+                                {
+                                        if (particles[i].type == 'a')
+                                        {
+                                                fprintf(outfile,
+                                                        "%c %.12lf %.12lf %.12lf %.12lf\n",
+                                                        particles[i].type,
+                                                        particles[i].x * sigma,
+                                                        particles[i].y * sigma,
+                                                        particles[i].z * sigma,
+                                                        particles[i].r * sigma / 5.0f
+                                                        );
+                                        }
+                                        else
+                                        {
+                                                fprintf(outfile,
+                                                        "%c %.12lf %.12lf %.12lf %.12lf\n",
+                                                        particles[i].type,
+                                                        particles[i].x * sigma,
+                                                        particles[i].y * sigma,
+                                                        particles[i].z * sigma,
+                                                        particles[i].r * sigma
+                                                        );
+                                        }
+                                }
+                                break;
+                        }
+
+                }
                 fclose(outfile);
         }
 }
@@ -805,33 +840,6 @@ int retrieveIndex(int u, int v, int w)
                 + (u + 2 * nCell1D) % nCell1D;
         return index;
 
-}
-
-
-
-int snapshot(void)
-{
-        FILE *writeto = NULL;
-         // coordinates
-        //writeCoords("snap_coords.sph");
-        writeCoords(snap_filename);
-        // density, if needed
-        writeto = fopen("snap_density.txt", "a");
-        fprintf(writeto, "%.12lf\n", 6.0f * measurePF() / (M_PI * sigma * sigma * sigma));
-        fclose(writeto);
-        return 0;
-}
-
-
-
-int takeSnapshot(int n)
-{
-        if ((cSnapshot < n) && (genrand() < (2 * (double) (n) / (double) (MCCycle))))
-        {
-                snapshot(); // be careful, need to change writing method so it concatenates properly
-                cSnapshot += 1;
-        }
-        return 0;
 }
 
 
@@ -1416,12 +1424,16 @@ int* calc_conn(compl* orderp)
                 }
                 if(z >= nbnd_cutoff)
                 {
+                        // particle is crystal-like
                         conn[i]=1;
                 } 
                 else 
                 {
                         conn[i]=0;
+                        // particle is fluid-like, change type (or rather, keep it `0`, and reduce size for visualization purposes)
+                        // NB: changing size requires an extra step to buck back size to normal before next MC move
                 }
+                particles[i].type = 'a';
         }
 
         return conn;
@@ -1465,9 +1477,15 @@ int calc_clusters(int* conn, compl* orderp)
                         //obnd_cutoff = 0.9 gives nice results,
                         //obnd_cutoff =  0.6 gives all touching nuclei as one big nuclei
                                 cs++;
+                                //if (cs >= nbnd_cutoff)
+                                //        particles[tmp].type = 'a' + cn;
                                 setcluss(tmp);
                         }  
+                        //f (cs >= nbnd_cutoff)
+                        //        particles[tmp].type = 'a' + cn;
                 }
+                if (conn[pn] == 1)
+                        particles[pn].type = 'a' + cn;
         }
 
         // body
@@ -1490,6 +1508,11 @@ int calc_clusters(int* conn, compl* orderp)
                         { 
                                 big = cs;
                                 //bc = cn;
+                        }
+                        //if (cs >= nbnd_cutoff)
+                        if (conn[i] == 1)
+                        {
+                                particles[i].type = 'a' + cn;
                         }
                         cn++;
                 }
@@ -1684,7 +1707,7 @@ void trajectory(void)
         rule = exp(potBiasOld - potBias);
         if (proba > rule)
         {// reject trajectory
-                printf("trajectory rejected!\n");
+                //printf("trajectory rejected!\n");
                 // copies configuration backup
                 for (int j = 0; j < N; j++)
                 {
@@ -1710,7 +1733,7 @@ void trajectory(void)
         }
         else
         {// accept trajectory
-                printf("trajectory accepted!\n");
+                //printf("trajectory accepted!\n");
                 maxClusOld = maxClus;
                 potBiasOld = potBias;
                 // backup of new configuration
@@ -1795,7 +1818,7 @@ void relaxation(int nTrajectory)
                                         sP += particleMove(particleStepTune);
                         }
                 }
-                //sanityCheck();          // SOMETHING IS HAPPENING HERE
+                //sanityCheck();
 
                 // tunes acceptance rate when necessary
                 if (i % rPstep == rPstep-1)
@@ -1827,8 +1850,8 @@ void relaxation(int nTrajectory)
                                 particles[j].z = particlesCopy[j].z;
                                 particles[j].r = particlesCopy[j].r;
                                 particles[j].type = particlesCopy[j].type;
-                                particles[j].next = particlesCopy[j].next;              // can cause problems
-                                particles[j].prev = particlesCopy[j].prev;              // can cause problems
+                                particles[j].next = particlesCopy[j].next;
+                                particles[j].prev = particlesCopy[j].prev; 
                                 particles[j].CLindex = particlesCopy[j].CLindex;
                                 particles[j].index = particlesCopy[j].index;
                         }
@@ -1870,7 +1893,7 @@ void relaxation(int nTrajectory)
                         LOld = L;
                 }
                 //if (makeamovie)
-                //        writeCoords(movie_filename);
+                //        writeCoords(movie_filename, 1);
                 sanityCheck();
                 free(clustersLog);
         }
@@ -1917,8 +1940,11 @@ int main(int argc, char *argv[])
 
         // VARIABLES
         int halfSimtime = MCCycle / trajectoryLength / 2;
-        //printf("halfSimtime = %d\n", halfSimtime);
-
+        if (snapshots > halfSimtime)
+        {
+                printf("[US] Error: targeted amount of snapshots suprpasses the duration of the simulation.\n[US] Exit.\n");
+                exit(0);
+        }
 
         // OUTPUT FILES CLEANING
         FILE *writefile = fopen(clusterlog_filename, "w+");
@@ -1940,7 +1966,7 @@ int main(int argc, char *argv[])
         init_genrand(randseed);
         readInit(init_filename);
         if (makeamovie)
-                writeCoords(movie_filename);
+                writeCoords(movie_filename, 1);
         buildCL(1);
 
 
@@ -1955,6 +1981,8 @@ int main(int argc, char *argv[])
         // BODY
         //printf("Relaxation\n");
         relaxation(halfSimtime);
+        if (makeamovie)
+                writeCoords(movie_filename, 1);
         //sanityCheck();
         //printf("passed sanity check\n\n Main loop\n");
         
@@ -1962,14 +1990,17 @@ int main(int argc, char *argv[])
         {
                 trajectory();
                 //sanityCheck();
-                if (makeamovie)
-                        writeCoords(movie_filename);
-                printf("Completed traj. #%d\n", t);
+                if ((makeamovie) && (t % (halfSimtime / snapshots) == (halfSimtime / snapshots) - 1))
+                {
+                        printf("Took a snapshot at t = %d\n", t);
+                        writeCoords(movie_filename, 1);
+                }
+                //printf("Completed traj. #%d\n", t);
         }
 
 
         // END
-        writeCoords(lastsnap_filename);
+        writeCoords(lastsnap_filename, 1);
 
         free(CLTable);
         free(particles);
