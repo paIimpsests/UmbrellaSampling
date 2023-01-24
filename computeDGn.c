@@ -21,13 +21,9 @@
 
 //    PREPROCESSOR CONSTANTS
 // ============================
-#define T 300                                           // absolute temperature
-#define kB 1.380649e-23                                 // Boltzmann constant
 #define MAX_PART_CELL 40
 #define MAX_NEIGHBORS 50
 #define INVFPI 0.07957747154594766788444188168625718101 // = 1 / (4 * pi)
-#define eps kB*T                                        // unit of energy
-#define beta 1/eps
 
 
 

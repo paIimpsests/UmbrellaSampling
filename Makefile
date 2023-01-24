@@ -10,5 +10,5 @@ umbrella: umbrella.c Makefile
 	$(CC) $(CFLAGS) umbrella.c -o umbrella $(LIBS)
 
 energy: computeDGn.c Makefile
-	$(CC) $(CFLAGS) computeDGn.c -o computeDGn $(LIBS)
+	$(CC) $(CFLAGS) computeDGn.c -o energy $(LIBS)
 

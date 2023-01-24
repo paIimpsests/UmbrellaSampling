@@ -16,6 +16,7 @@
 #include <time.h>
 #include <math.h>               // need to compile with `-lm` flag
 #include <string.h>
+#include <getopt.h>
 #include "mt19937ar.c"
 
 
@@ -27,6 +28,17 @@
 #define INVFPI 0.07957747154594766788444188168625718101 // = 1 / (4 * pi)
 #define MAX_PART_CELL 40
 #define MAX_NEIGHBORS 50
+
+
+
+
+
+//    MACROS
+// ============
+#define OPTIONAL_ARGUMENT_IS_PRESENT \
+    ((optind < argc-1 && optarg == NULL && optind < argc && argv[optind][0] != '-') \
+     ? (uintptr_t) (optarg = argv[optind++]) \
+     : (optarg != NULL))
 
 
 
@@ -44,6 +56,7 @@ typedef struct nlistT nlistT;
 typedef struct posnb posnb;
 // functions
 // ----------------
+int parse_input(int argc, char* argv[]);
 int overlapCheck(Particle* one, Particle* two);
 int overlapCheckGlobal(void);
 int overlapCheckGlobalCL(void);
@@ -58,8 +71,6 @@ double measurePF(void);
 int buildCL(int usecase);
 int updateSingleCL(Particle* one);
 int retrieveIndex(int u, int v, int w);
-int snapshot(void);
-int takeSnapshot(int n);
 int findClusters(void);
 int findClusters_init(void);
 void init_nblist(void);
@@ -89,18 +100,18 @@ void trajectory(void);
 // ======================
 // hard spheres system
 // -----------------------
-int N = 0;                              // [READ FROM IMPUT] number of particles in the system
+int N = 2000;                           // [READ FROM IMPUT] [-N] number of particles in the system
 double L = 0.0f;                        // [READ FROM INPUT] reduced box size
 double LOld = 0.0f;                     // backup copy of the above
-double P = 15.0f;                       // [TUNABLE] reduced pressure --- only relevant for NPT
+double P = 16.0f;                       // [TUNABLE] [-P] reduced pressure --- only relevant for NPT
+double PD = 0.0f;                       // [TUNABLE] [-d] degree of polydispersity of the system
 double sigma = 1.0f;                    // unit of length = 1 = max particle size
-double PF = 0.0f;                       // [CALCULATED] system packing fraction
-double rho = 0.0f;                      // [CALCULATED] reduced number density
+double PF = 0.0f;                       // [TUNABLE] [-p] system packing fraction
 Particle *particles = NULL;             // [READ FROM INPUT] pointer to the table of particles data
 Particle *particlesCopy = NULL;         // backup copy of the above
 // mc
 // -----------------------
-const int MCCycle = 4000;               // [TUNABLE] number of cycles
+int MCCycle = 4000000;                  // [TUNABLE] [-c] number of cycles
 int randseed = 848321;                  // [TUNABLE] seed for random number generator
 int trajectoryLength = 20;              // [TUNABLE] length of a trajectory, in number of cycles, must be a divider of MCCycle
 double targetedAcceptanceRate = 0.30f;  // [TUNABLE] targeted acceptance rate for particle moves and volume moves
@@ -119,17 +130,17 @@ int countLogCopy;                       // backup copy of the above
 const double bndLength = 1.4f;          // [TUNABLE] distance cutoff for bonds, if used
 const double bndLengthSq = bndLength    // square of the distance cutoff for bonds
                      * bndLength;
-double bnd_cutoff = 0.7f;               // [TUNABLE] order to be called a correlated bond
-int nbnd_cutoff = 4;                    // [TUNABLE] number of correlated bonds for a crystalline particle
-double obnd_cutoff = 0.0f;              // [TUNABLE] order to be in the same cluster (0.0 for all touching clusters 0.9 to see defects)
+double bnd_cutoff = 0.7f;               // [TUNABLE] [-b] order to be called a correlated bond
+int nbnd_cutoff = 4;                    // [TUNABLE] [-c] number of correlated bonds for a crystalline particle
+double obnd_cutoff = 0.0f;              // [TUNABLE] [-o] order to be in the same cluster (0.0 for all touching clusters 0.9 to see defects)
 double maxr2 = 0.0f;
 blistT *blist;
 int maxClus = 0;                        // size of the largest cluster in the system at its current state
 int maxClusOld = 0;                     // backup of the size of the largest cluster in the system at its former state
 // umbrella sampling
 // -----------------------
-double k = 0.15;                        // [TUNABLE] coupling parameter for the bias potential
-int n0 = 10;                            // [TUNABLE] targeted cluster size
+double k = 0.15;                        // [TUNABLE] [-k] coupling parameter for the bias potential
+int n0 = 10;                            // [TUNABLE] [-n] targeted cluster size
 double potBias = 0.0f;                  // value of the bias potential associated with the size of the largest cluster in the current state of the system
 double potBiasOld = 0.0f;               // value of the bias potential associated with the size of the largest cluster in the previous state of the system
 // input/output
@@ -138,9 +149,11 @@ char* init_filename;                    // name of the initial configuration inp
 char lastsnap_filename[200];            // name of the last snapshot output file
 char movie_filename[200];               // name of the movie output file
 char clusterlog_filename[200];          // name of the clusters log output file
-int makeamovie = 1;                     // [TUNABLE] choice to make a movie of snapshots taken after each trajectory
-int snapshots = 100;                    // [TUNABLE] number of snapshots for the movie
-
+int makeamovie = 0;                     // [TUNABLE] [-m] choice to make a movie of snapshots
+int snapshots = 100;                    // [TUNABLE] [-m snapshots] number of snapshots for the movie
+int hide_fluidlike = 0;                 // [TUNABLE] [-f] choice to reduce the size of fluidlike ('a'-type) particles in the movie snapshots
+// other
+// -----------------------
 int t = 0;
 
 
@@ -224,6 +237,134 @@ struct posnb
 
 //    FUNCTIONS
 // ===============
+int parse_input(int argc, char* argv[])
+{
+        // Parsing of command line arguments
+	struct option longopt[]=
+        {
+		{"pressure",required_argument,NULL,'P'},
+		{"packing-fraction",required_argument,NULL,'p'},
+                {"cycles",required_argument,NULL,'c'},
+                {"spring-constant",required_argument,NULL,'k'},
+                {"cluster-size",required_argument, NULL,'n'},
+                {"movie",optional_argument,NULL,'m'},
+                {"particles",required_argument,NULL,'N'},
+                {"polydispersity",required_argument,NULL,'d'},
+                {"bnd-cutoff",required_argument,NULL,'b'},
+                {"nbnd-cutoff",required_argument,NULL,'x'},
+                {"obnd-cutoff",required_argument,NULL,'o'},
+                {"hide-fluidlike",no_argument,NULL,'f'},
+		{"help",no_argument,NULL,'h'},
+		{0,0,0,0}
+        };
+
+        int c;
+        while ((c = getopt_long(argc, argv, "P:p:c:k:n:m::N:d:b:x:o:fh", longopt, NULL)) != -1)
+        {
+                switch (c)
+                {
+                        case 'P':
+                                if (sscanf(optarg, "%lf", &P) != 1)
+                                {
+                                        printf("[umbrella] Could not parse pressure.\n");
+                                        exit(0);
+                                }
+                                break;
+                        case 'p':
+                                if (sscanf(optarg, "%lf", &PF) != 1)
+                                {
+                                                printf("[umbrella] Could not parse packing fraction.\n");
+                                        exit(0);
+                                }
+                                break;
+                        case 'c':
+                                if (sscanf(optarg, "%d", &MCCycle) != 1)
+                                {
+                                        printf("[umbrella] Could not parse number of cycles. Reverting to default: %d.\n", MCCycle);
+                                }
+                                break;
+                        case 'k':
+                                if (sscanf(optarg, "%lf", &k) != 1)
+                                {
+                                        printf("[umbrella] Could not parse spring constant.\n");
+                                        exit(0);
+                                }
+                                break;
+                        case 'n':
+                                if (sscanf(optarg, "%d", &n0) != 1)
+                                {
+                                        printf("[umbrella] Could not parse cluster size.\n");
+                                        exit(0);
+                                }
+                                break;
+                        case 'm': // option with optional argument
+                                makeamovie = 1;
+                                if (OPTIONAL_ARGUMENT_IS_PRESENT)
+                                {// Handle is present
+                                        if (sscanf(optarg, "%d", &snapshots) != 1)
+                                        {
+                                                // Could also check for snapshots==0; in which case we can either revert back to makeamovie=1 or continue with default snapshots value
+                                                printf("[umbrella] Could not parse number of snapshots. Reverting to default: %d.\n", snapshots);
+                                        }
+                                }
+                                break;
+                        case 'N':
+                                if (sscanf(optarg, "%d", &N) != 1)
+                                {
+                                        printf("[umbrella] Could not parse number of particles. Reverting to default: %d. This is for naming convention only.\n", N);
+                                }
+                                break;
+                        case 'd':
+                                if (sscanf(optarg, "%lf", &PD) != 1)
+                                {
+                                        printf("[umbrella] Could not parse degree of polydispersity. Reverting to default: %.2lf. This is for naming convention only.\n", PD);
+                                }
+                                break;
+                        case 'b':
+                                if (sscanf(optarg, "%lf", &bnd_cutoff) != 1)
+                                {
+                                        printf("[umbrella] Could not parse bnd_cutoff value.\n");
+                                        exit(0);
+                                }
+                                break;
+                        case 'x':
+                                if (sscanf(optarg, "%d", &nbnd_cutoff) != 1)
+                                {
+                                        printf("[umbrella] Could not parse nbnd_cutoff value.\n");
+                                        exit(0);
+                                }
+                                break;
+                        case 'o':
+                                if (sscanf(optarg, "%lf", &obnd_cutoff) != 1)
+                                {
+                                        printf("[umbrella] Could not parse obnd_cutoff value.\n");
+                                        exit(0);
+                                }
+                                break;
+                        case 'f':
+                                hide_fluidlike = 1;
+                                break;
+                        
+                        case 'h':
+                                printf("[umbrella]\n * HELP IS WIP.\n");
+                                exit(0);
+                }
+        }
+
+        if(optind>argc-1)
+        {
+		printf("[umbrella] Usage: ./boop [OPTIONS] SOURCE\n");
+		exit(0);
+	}
+	
+        init_filename = argv[optind];
+        
+        return 0;
+}
+
+
+
+
 int overlapCheck(Particle* one, Particle* two)
 {
         /*\
@@ -1905,34 +2046,22 @@ void relaxation(int nTrajectory)
 // ==========
 int main(int argc, char *argv[])
 {
-        // INPUT
-        if (argc == 2)
-                init_filename = argv[1];
-        else
-        {
-                printf("ERROR: no input filename specified\n");
-                exit(0);
-        }
-
         // PARSING INPUT
-        if (sscanf(init_filename, "init_configs/n%d_PF%lf.sph", &N, &PF) != 2)
-        {
-                printf("Error: could not parse string\n");
-                exit(0);
-        }
+        // NB: one could even think of reading the value for N directly from the supplied file
+        parse_input(argc, argv);
 
         // OUTPUT
-        if (sprintf(clusterlog_filename, "./clusters_data/clusters_n%d_P%.2lf_k%.2lf.txt", N, P, k) < 0)
+        if (sprintf(clusterlog_filename, "./clusters_data/clusters_n%d_P%.2lf_n0%d_k%.2lf_obnd%.2lf.txt", N, P, n0, k, obnd_cutoff) < 0)
         {
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(lastsnap_filename, "./snapshots/last_n%d_P%.2lf_k%.2lf.sph", N, P, k) < 0)
+        if (sprintf(lastsnap_filename, "./snapshots/last_n%d_P%.2lf_n0%d_k%.2lf_obnd%.2lf.sph", N, P, n0, k, obnd_cutoff) < 0)
         {
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(movie_filename, "./snapshots/movie_n%d_P%.2lf_k%.2lf.sph", N, P, k) < 0)
+        if (sprintf(movie_filename, "./snapshots/movie_n%d_P%.2lf_n0%d_k%.2lf_obnd%.2lf.sph", N, P, n0, k, obnd_cutoff) < 0)
         {
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
@@ -1940,7 +2069,7 @@ int main(int argc, char *argv[])
 
         // VARIABLES
         int halfSimtime = MCCycle / trajectoryLength / 2;
-        if (snapshots > halfSimtime)
+        if (makeamovie && snapshots > halfSimtime)
         {
                 printf("[US] Error: targeted amount of snapshots suprpasses the duration of the simulation.\n[US] Exit.\n");
                 exit(0);
@@ -1964,9 +2093,14 @@ int main(int argc, char *argv[])
 
         // SYSTEM INITIALIZATION        
         init_genrand(randseed);
+        printf("[umbrella]\n * Starting US scheme with parameters n0 = %d, k = %.2lf, P = %.2lf\n * Supplied starting configuration has N = %d\n * Simulation is to run for %d cycles\n * BOOP parameters are: bnd_cutoff = %.2lf, nbnd_cutoff = %d, obnd_cutoff = %.2lf\n", n0, k, P, N, MCCycle, bnd_cutoff, nbnd_cutoff, obnd_cutoff);
+        if (makeamovie)
+                printf(" * A movie of %d snapshots is to be taken\n", snapshots);
+        if (hide_fluidlike)
+                printf(" * Fluid-like particles will be reduced in size for easier visualization of clusters\n");
         readInit(init_filename);
         if (makeamovie)
-                writeCoords(movie_filename, 1);
+                writeCoords(movie_filename, hide_fluidlike);
         buildCL(1);
 
 
@@ -1982,7 +2116,7 @@ int main(int argc, char *argv[])
         //printf("Relaxation\n");
         relaxation(halfSimtime);
         if (makeamovie)
-                writeCoords(movie_filename, 1);
+                writeCoords(movie_filename, hide_fluidlike);
         //sanityCheck();
         //printf("passed sanity check\n\n Main loop\n");
         
@@ -1992,21 +2126,24 @@ int main(int argc, char *argv[])
                 //sanityCheck();
                 if ((makeamovie) && (t % (halfSimtime / snapshots) == (halfSimtime / snapshots) - 1))
                 {
-                        printf("Took a snapshot at t = %d\n", t);
-                        writeCoords(movie_filename, 1);
+                        //printf("Took a snapshot at t = %d\n", t);
+                        writeCoords(movie_filename, hide_fluidlike);
                 }
                 //printf("Completed traj. #%d\n", t);
         }
-
+        if (makeamovie)
+                writeCoords(movie_filename, hide_fluidlike);
 
         // END
-        writeCoords(lastsnap_filename, 1);
+        writeCoords(lastsnap_filename, 0);
 
         free(CLTable);
         free(particles);
         free(particlesCopy);
         free(clustersLogCopy);
 
-        printf("MC simulation terminated normally\n"); 
+        printf("[umbrella] Program terminated normally\n[umbrella] Produced %s\n[umbrella] Produced %s\n", lastsnap_filename, clusterlog_filename);
+        if (makeamovie)
+                printf("[umbrella] Produced %s\n", movie_filename);
         return 0;
 }
