@@ -143,12 +143,17 @@ double k = 0.15;                        // [TUNABLE] [-k] coupling parameter for
 int n0 = 10;                            // [TUNABLE] [-n] targeted cluster size
 double potBias = 0.0f;                  // value of the bias potential associated with the size of the largest cluster in the current state of the system
 double potBiasOld = 0.0f;               // value of the bias potential associated with the size of the largest cluster in the previous state of the system
+// ensemble average
+// -----------------------
+double* Nn_num = NULL;                  // numerator for DGn calculations running in background
+double Nn_den = 0.0f;                   // denominator for DGn calculations running in background
 // input/output
 // -----------------------
 char* init_filename;                    // name of the initial configuration input file
 char lastsnap_filename[200];            // name of the last snapshot output file
 char movie_filename[200];               // name of the movie output file
 char clusterlog_filename[200];          // name of the clusters log output file
+char DGndata_filename[200];             // name of the DGn data output file
 int makeamovie = 0;                     // [TUNABLE] [-m] choice to make a movie of snapshots
 int snapshots = 100;                    // [TUNABLE] [-m snapshots] number of snapshots for the movie
 int hide_fluidlike = 0;                 // [TUNABLE] [-f] choice to reduce the size of fluidlike ('a'-type) particles in the movie snapshots
@@ -524,6 +529,8 @@ void readInit(char *filename)
                 }
                 particles = malloc(N * sizeof(*particles));
                 particlesCopy = malloc(N * sizeof(*particlesCopy));
+                Nn_num = malloc(N * sizeof(*Nn_num));
+                memset(Nn_num, (double) 0.0f, N * sizeof(*Nn_num));
 
                 // Read value of box size
                 if (fscanf(initfile, "%lf %*f %*f%*c", &L) != 1)
@@ -1905,7 +1912,8 @@ void trajectory(void)
         FILE *saveclusters = fopen(clusterlog_filename, "a");
         if (saveclusters != NULL)
         {
-                fprintf(saveclusters, "t-%d\n&%d\n", t, countLog);
+                //fprintf(saveclusters, "t-%d\n&%d\n", t, countLog);
+                fprintf(saveclusters, "&%d\n", countLog);
                 for (int i = 0; i < N; i++)
                 {
                         if (clustersLog[i] != 0)
@@ -1913,6 +1921,10 @@ void trajectory(void)
                 }
                 fclose(saveclusters);
         }
+
+        // feeding calculation of DGn
+        Nn_den += exp(potBias);
+        Nn_num[maxClus] += 1.0f / exp(- potBias); // this can cause problems for small clusters if the number of clusters of maxsize exceeds one
 
         free(clustersLog);
 }
@@ -2046,6 +2058,11 @@ void relaxation(int nTrajectory)
 // ==========
 int main(int argc, char *argv[])
 {
+        // CPU TIME MEASUREMENT | START
+        struct timespec begin, end;
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
+
+
         // PARSING INPUT
         // NB: one could even think of reading the value for N directly from the supplied file
         parse_input(argc, argv);
@@ -2066,6 +2083,11 @@ int main(int argc, char *argv[])
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
+        if (sprintf(DGndata_filename, "./data/DGn_n%d_P%.2lf_n0%d_k%.2lf_obnd%.2lf.sph", N, P, n0, k, obnd_cutoff) < 0)
+        {
+                printf("[US] Could not write string. Exit.\n");
+                exit(0);
+        }
 
         // VARIABLES
         int halfSimtime = MCCycle / trajectoryLength / 2;
@@ -2081,6 +2103,10 @@ int main(int argc, char *argv[])
                 fclose(writefile);
         
         writefile = fopen(lastsnap_filename, "w+");
+        if (writefile != NULL)
+                fclose(writefile);
+
+        writefile = fopen(DGndata_filename, "w+");
         if (writefile != NULL)
                 fclose(writefile);
 
@@ -2134,6 +2160,20 @@ int main(int argc, char *argv[])
         if (makeamovie)
                 writeCoords(movie_filename, hide_fluidlike);
 
+        // SAVING DGn DATA
+        writefile = fopen(DGndata_filename, "a");
+        if (writefile != NULL)
+        {
+                for (int i = 0; i < N; i++)
+                {
+                        if (Nn_num[i] > 0.0f)
+                        {
+                                fprintf(writefile, "%d\t%.12lf\n", i, -log(Nn_num[i] / Nn_den / N));
+                        }
+                }
+                fclose(writefile);
+        }
+
         // END
         writeCoords(lastsnap_filename, 0);
 
@@ -2145,5 +2185,11 @@ int main(int argc, char *argv[])
         printf("[umbrella] Program terminated normally\n[umbrella] Produced %s\n[umbrella] Produced %s\n", lastsnap_filename, clusterlog_filename);
         if (makeamovie)
                 printf("[umbrella] Produced %s\n", movie_filename);
+        //  CPU TIME MEASUREMENT | END
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+        long seconds = end.tv_sec - begin.tv_sec;       
+        long nanoseconds = end.tv_nsec - begin.tv_nsec;
+        double elapsed = seconds + nanoseconds*1e-9;
+        printf("[umbrella] Elapsed CPU time:\t%.3fs\n", elapsed);
         return 0;
 }

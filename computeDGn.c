@@ -128,7 +128,7 @@ double Ubias(int sizeClus)
          *  return:     bias potential for the aforementioned cluster size
         \*/
 
-        double w =0.0f;
+        double w = 0.0f;
         w = 0.5f * k * ((double) sizeClus - (double) n0) * ((double) sizeClus - (double) n0);
         return w;
 
@@ -139,11 +139,10 @@ double Ubias(int sizeClus)
 void calcNn(void)
 {
         // Contribution to the denominator for one snapshot
-        Nn_den += exp(Ubias(Nn_ri[nLines].Nn));
+        Nn_den += exp(Ubias(Nn_ri[nLines-1].n));
 
         // Contribution to the denomitnator of Nn for one snapshot
-        for (int i = 0; i < nLines; i++)
-                Nn_num[Nn_ri[i].n] += Nn_ri[i].Nn / exp(- Ubias(Nn_ri[nLines].Nn));
+        Nn_num[Nn_ri[nLines-1].n] += Nn_ri[nLines-1].Nn / exp(- Ubias(Nn_ri[nLines-1].n));
 }
 
 
@@ -251,8 +250,8 @@ int main(int argc, char* argv[])
                                 fprintf(writefile, "%d\t%.12lf\n", i, -log(Nn_num[i] / Nn_den / N));
                         }
                 }
+                fclose(writefile);
         }
-        fclose(writefile);
 
 
         // END

@@ -1,6 +1,6 @@
 CC = gcc
 
-CFLAGS = -Wall -Ofast -g
+CFLAGS = -Wall -Ofast
 
 LIBS = -lm
 
