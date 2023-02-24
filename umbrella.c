@@ -1002,7 +1002,7 @@ void build_nblist(int method){
                                                 neighbours[numposnb].dy = dy;
                                                 neighbours[numposnb].dz = dz;
                                                 // continues with the next neighbouring particle
-                                                numposnb ++;
+                                                numposnb++;
                                                 current = current->next;
                                         }
                                 }
@@ -1019,7 +1019,7 @@ void build_nblist(int method){
                                 while (!done){
                                         double rim = 0;
                                         for (int i = 0; i < m; i++)
-                                        rim += neighbours[i].dist / (m - 2);
+                                                rim += neighbours[i].dist / (m - 2);
                                         if (rim > neighbours[m].dist) {m++;}
                                         else {done = 1;}
                                         if (m > numposnb){ 
@@ -1122,7 +1122,7 @@ compl* calc_order(void){
         // NB: this memset is still mandatory to make sure orderp/order are
         // entirely overwritten
 
-        // Compute qs dot products
+        // Compute qs
         for(int i = 0; i < N; i++){
                 q1 = (orderp + i * (2 * l + 1) + l);
                 for(int j = 0; j < blist[i].n; j++){
@@ -1132,7 +1132,7 @@ compl* calc_order(void){
                         }  
                 }
         }  
-        // Normalize qs dot products
+        // Normalize qs
         for(int i = 0; i < N; i++){
                 temp = sqrt(dotprod(orderp + i * (2 * l + 1), orderp + i * (2 * l + 1), l));
                 temp = 1.0 / temp;
@@ -1201,7 +1201,6 @@ void compute_order(int l, bndT *bnd, compl *res1, compl *res2){
         z = bnd->nz;
 
         // Not tested for l! = 6 
-
         p = plgndr(l,0,z);
         fc = facs(l,0);
         f = sqrt((2*l+1) * INVFPI * fc);
@@ -1295,11 +1294,9 @@ double facs(int l, int m){
  */
         static double* fac_table = NULL;
         int a, b;
-        if(fac_table == NULL)
-        {
+        if(fac_table == NULL){
                 fac_table = malloc((2*l+1) * sizeof(*fac_table));
-                for(a = 0; a < 2*l+1; a++)
-                {
+                for(a = 0; a < 2*l+1; a++){
                         b = a - l;
                         fac_table[a]= exp(gammln(l - b + 1) - gammln(l + b + 1));
                 }
@@ -1627,7 +1624,7 @@ int calcDGn(int c){
                 case 0:
                 // Feeds DGn calculation
                         Nn_den += exp(potBias);
-                        Nn_num[maxClus] += (double) nbig / exp(- potBias);
+                        Nn_num[maxClus] += ((double) nbig / exp(- 1.0f * potBias));
                         break;
                 case 1:
                 // Writes DGn to a file
@@ -1635,7 +1632,7 @@ int calcDGn(int c){
                         if (outfile != NULL){
                                 for (int i = 0; i < N; i++){
                                         if (Nn_num[i] > 0.0f){
-                                                fprintf(outfile, "%d\t%.12lf\n", i, -log(Nn_num[i] / Nn_den / N));
+                                                fprintf(outfile, "%d\t%.12lf\n", i, -log(Nn_num[i] / Nn_den / (double) N));
                                         }
                                 }
                                 fclose(outfile);
