@@ -113,10 +113,8 @@ int trajectoryLength = 20;              // [TUNABLE] length of a trajectory, in 
 double relax = 0.5f;                    // [TUNABLE] [-r] proportion of simulation time the system spends relaxing
 int relaxation;                         // number of cycles the system spends relaxing
 int aT = 0, rT = 0;                     // total number of accepted, rejected trajectories
-int aPm = 0, rPm = 0;                   // total number of accepted, rejected particle moves
-int aPmt = 0, rPmt = 0;                 // number of accepted, rejected particle moves since last step size tuning attempt
-int aVm = 0, rVm = 0;                   // total number of accepted, rejected volume moves
-int aVmt = 0, rVmt = 0;                 // number of accepted, rejected volume moves since last step size tuning attempt
+int aPm = 0, rPm = 0;                   // number of accepted, rejected particle moves since last step size tuning attempt
+int aVm = 0, rVm = 0;                   // number of accepted, rejected volume moves since last step size tuning attempt
 double pStepSize = 0.1f;                // particle move step size
 double vStepSize = 0.4f;                // volume move step size
 double arPm, arVm;                      // particles, volume moves acceptance rate
@@ -754,18 +752,18 @@ void tuneStepSize(void){
  *  (within a treshold)
  */
         // Volume moves
-        arVm = (double) (aVm - aVmt) / (double) (aVm - aVmt + rVm - rVmt);
-        aVmt = aVm;
-        rVmt = rVm;
+        arVm = (double) aVm / (double) (aVm + rVm);
+        aVm = 0;
+        rVm = 0;
         if (arVm > tarV + tarTreshold)
                 vStepSize *= 1.05;
         else if (arVm < tarV - tarTreshold)
                 vStepSize *= 0.95;
 
         // Particle moves
-        arPm = (double) (aPm - aPmt) / (double) (aPm - aPmt + rPm - rPmt);
-        aPmt = aPm;
-        rPmt = rPm;
+        arPm = (double) aPm / (double) (aPm + rPm);
+        aPm = 0;
+        rPm = 0;
         if (arPm > tarP + tarTreshold)
                 pStepSize *= 1.05;
         else if (arPm < tarP - tarTreshold)
@@ -1661,7 +1659,7 @@ void printVerbose(int i){
  * -------------------------
  * Prints out some information on the system state and simulation
  */
-        printf("[umbrella] Cycle %d\n * acceptance rate\tlast 100 cycles\toverall\n * particle moves\t%.3lf\t\t%.3lf\n * volume moves\t\t%.3lf\t\t%.3lf\n", i, arPm, (double) aPm / (double) (aPm+rPm), arVm, (double) aVm / (double) (aVm+rVm));
+        printf("[umbrella] Cycle %d\n * acceptance rate\tlast 100 (1000 if relaxation is finished) cycles\n * particle moves\t%.3lf\n * volume moves\t\t%.3lf\n", i, arPm, arVm);
 }
 
 
@@ -1671,9 +1669,9 @@ void saveVerbose(int i){
  * ------------------------
  * Save some information on the system state and simulation
  */
-        FILE* trackfile = fopen(tracking_filename, "a");;
+        FILE* trackfile = fopen(tracking_filename, "a");
         if (trackfile != NULL){
-                fprintf(trackfile, "%d %.3lf %d %d %.4lf %.3lf %d %d %.4lf %d %d %.4lf %.4lf %.3lf %.3lf\n", i, (double) aPm / (double) (aPm+rPm), aPm, rPm, pStepSize, (double) aVm / (double) (aVm+rVm), aVm, rVm, vStepSize, aT, rT, L, PF, degX, degX_maxC);
+                fprintf(trackfile, "%d %.3lf %.4lf %.3lf %.4lf %d %d %.4lf %.4lf %.3lf %.3lf\n", i, arPm, pStepSize, arVm, vStepSize, aT, rT, L, PF, degX, degX_maxC);
                 fclose(trackfile);
         }
 }
@@ -1778,9 +1776,16 @@ int main(int argc, char *argv[])
                                         writeCoords(movie_filename, hide_fluidlike);
                                 }
                                 if (i%1000 == 999){
-                                        if (tune){tuneStepSize();}
-                                        if (verbose){printVerbose(i);}
-                                        if (track){measurePF(); saveVerbose(i);}
+                                        measurePF();
+                                        arPm = (double) aPm / (double) (aPm + rPm);
+                                        aPm = 0;
+                                        rPm = 0;
+                                        arVm = (double) aVm / (double) (aVm + rVm);
+                                        aVm = 0;
+                                        rVm = 0;
+                                        if (tune)tuneStepSize();
+                                        if (verbose) printVerbose(i);
+                                        if (track) saveVerbose(i);
                                 }
                         }
                 }
