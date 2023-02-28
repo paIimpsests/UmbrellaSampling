@@ -171,12 +171,14 @@ char movie_filename[200];               // name of the movie output file
 char clusterlog_filename[200];          // name of the clusters log output file
 char DGndata_filename[200];             // name of the DGn data output file
 char tracking_filename[200];            // name of the system information tracking file
+char snap_filename[200];                // name of the snapshot file used to launch the next window
 int makeamovie = 0;                     // [TUNABLE] [-m] choice to make a movie of snapshots
 int snapshots = 100;                    // [TUNABLE] [-m snapshots] number of snapshots for the movie
 int hide_fluidlike = 0;                 // [TUNABLE] [-f] choice to reduce the size of fluidlike ('a'-type) particles in the movie snapshots
 int save = 0;                           // [TUNABLE] [-l] choice to save cluster logs
 int verbose = 0;                        // [TUNABLE] [-v] choiche to print more system info during simulation
 int track = 0;                          // [TUNABLE] [-V] choice to save tracking of system info
+int snap = 1;                           // tracker for if snapshot to launch next window was produced
 
 
 
@@ -1624,7 +1626,7 @@ int calcDGn(int c){
                         Nn_den += exp(potBias);
                         Nn_num[maxClus] += ((double) nbig / exp(- 1.0f * potBias));
                         break;
-                case 1:
+                case 1: ;
                 // Writes DGn to a file
                         FILE* outfile = fopen(DGndata_filename, "a");
                         if (outfile != NULL){
@@ -1699,23 +1701,27 @@ int main(int argc, char *argv[])
 
 
         // OUTPUT
-        if (sprintf(clusterlog_filename, "./data/clusters_n%d_P%.2lf_g%d_n0%d_k%.2lf_obnd%.2lf.txt", N, P, randseed, n0, k, obnd_cutoff) < 0){
+        if (sprintf(clusterlog_filename, "./data/clusters_n%d_P%.2lf_g%d_n0%d_k%.2lf.txt", N, P, randseed, n0, k) < 0){
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(lastsnap_filename, "./snapshots/last_n%d_P%.2lf_g%d_n0%d_k%.2lf_obnd%.2lf.sph", N, P, randseed, n0, k, obnd_cutoff) < 0){
+        if (sprintf(lastsnap_filename, "./snapshots/last_n%d_P%.2lf_g%d_n0%d_k%.2lf.sph", N, P, randseed, n0, k) < 0){
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(movie_filename, "./snapshots/movie_n%d_P%.2lf_g%d_n0%d_k%.2lf_obnd%.2lf.sph", N, P, randseed, n0, k, obnd_cutoff) < 0){
+        if (sprintf(movie_filename, "./snapshots/movie_n%d_P%.2lf_g%d_n0%d_k%.2lf.sph", N, P, randseed, n0, k) < 0){
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(DGndata_filename, "./data/DGn_n%d_P%.2lf_g%d_n0%d_k%.2lf_obnd%.2lf.txt", N, P, randseed, n0, k, obnd_cutoff) < 0){
+        if (sprintf(DGndata_filename, "./data/DGn_n%d_P%.2lf_g%d_n0%d_k%.2lf.txt", N, P, randseed, n0, k) < 0){
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
-        if (sprintf(tracking_filename, "./data/sysinfo_n%d_P%.2lf_g%d_n0%d_k%.2lf_obnd%.2lf.txt", N, P, randseed, n0, k, obnd_cutoff) < 0){
+        if (sprintf(tracking_filename, "./data/sysinfo_n%d_P%.2lf_g%d_n0%d_k%.2lf.txt", N, P, randseed, n0, k) < 0){
+                printf("[US] Could not write string. Exit.\n");
+                exit(0);
+        }
+        if (sprintf(snap_filename, "./snapshots/snap_n%d_P%.2lf_g%d_n0%d_k%.2lf.sph", N, P, randseed, n0, k) < 0){
                 printf("[US] Could not write string. Exit.\n");
                 exit(0);
         }
@@ -1769,6 +1775,12 @@ int main(int argc, char *argv[])
                 if (i%50 == 49){sanityCheck();}
                 if (i%trajectoryLength == trajectoryLength-1){
                         concludeTrajectory();
+                        if (snap && (maxClus > n0-2) && (maxClus < n0+2)) {
+                                writefile = fopen(snap_filename, "w+");
+                                if (writefile != NULL) {fclose(writefile);}
+                                writeCoords(snap_filename, 0);
+                                snap = 0;
+                        }
                         if (i > relaxation){
                                 if (save){saveLogs();}
                                 calcDGn(0);
@@ -1803,7 +1815,7 @@ int main(int argc, char *argv[])
         
         // END
         writeCoords(lastsnap_filename, 0);
-        printf("[umbrella] Program terminated normally\n[umbrella] Produced %s\n[umbrella] Produced %s\n", lastsnap_filename, DGndata_filename);
+        printf("[umbrella] Program terminated normally\n[umbrella] Produced %s\n[umbrella] Produced %s\n[umbrella] Produced %s\n", lastsnap_filename, DGndata_filename, snap_filename);
         if (save){printf("[umbrella] Produced %s\n", clusterlog_filename);}
         if (track){printf("[umbrella] Produced %s\n", tracking_filename);}
         if (makeamovie){printf("[umbrella] Produced %s\n", movie_filename);}
