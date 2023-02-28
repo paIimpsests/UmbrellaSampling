@@ -1200,22 +1200,23 @@ void compute_order(int l, bndT *bnd, compl *res1, compl *res2){
         int m = 0;
         z = bnd->nz;
 
-        // Not tested for l! = 6 
+        // Computes the spherical harmonics for m = 0
         p = plgndr(l,0,z);
         fc = facs(l,0);
         f = sqrt((2*l+1) * INVFPI * fc);
         r = p*f;
         (res1+0)->re += r;
         (res1+0)->im += 0;
-        (res2+0)->re += r * minpow(l);
+        (res2+0)->re += r * minpow(l); // minpow(6)=1
         (res2+0)->im += 0;
+        
         s=0;
         sp=0;
         c=1;
         cp=0;
 
         for(m = 1; m <= l; m++){
-                // positive m
+                // For m > 0
                 p = plgndr(l,m,z);
                 fc = facs(l,m);
                 f = sqrt((2 * l + 1) * INVFPI * fc);
@@ -1232,7 +1233,7 @@ void compute_order(int l, bndT *bnd, compl *res1, compl *res2){
                 (res1+m)->im += r*s;
                 (res2+m)->re += r*c;
                 (res2+m)->im += r*s;
-                //negative m
+                // For m < 0
                 r *= minpow(m);
                 (res1-m)->re += r*c;
                 (res1-m)->im += -r*s;
@@ -1246,6 +1247,14 @@ void compute_order(int l, bndT *bnd, compl *res1, compl *res2){
 float plgndr(int l, int m, double x){
 /* Function:    plgndr
  * -------------------
+ * Calculates the Legendre function P_{l,m}(x) = (1-x**2)**{m/2} (\frac{d}{dx})**m P_l(x)
+ * where P_l(x) is the Legendre polynomial defined for x on [-1;1]
+ *
+ * l:           parameter
+ * m:           parameter
+ * x:           cos(theta), must be in [-1;1]
+ *
+ * return:      P_{l,m}(x)
  */
         // variables
         double fact,
@@ -1291,6 +1300,12 @@ float plgndr(int l, int m, double x){
 double facs(int l, int m){
 /* Function:    facs
  * -----------------
+ * Computes (l-m)!/(l+m)!
+ *
+ * l:           parameter
+ * m:           parameter
+ *
+ * return:      (l-m)!/(l+m)!
  */
         static double* fac_table = NULL;
         int a, b;
@@ -1309,6 +1324,11 @@ double facs(int l, int m){
 double gammln(double xx){
 /* Function:    gammln
  * -------------------
+ * Uses the Gamma function to compute factorials
+ *
+ * xx:          input number
+ *
+ * return:      factorial of xx-1
  */
         double x,
                y,
@@ -1321,7 +1341,7 @@ double gammln(double xx){
                                 0.1208650973866179e-2,
                                 -0.5395239384953e-5
                                 };
-        int j;
+        int j;ml
         y = x = xx;
         tmp = x + 5.5;
         tmp -= (x + 0.5) * log(tmp);
@@ -1336,6 +1356,7 @@ double gammln(double xx){
 double minpow(int m){
 /* Function:    minpow
  * -------------------
+ * Returns 1.0f if m is even, -1.0f if m is odd
  */
         if((m & 1) == 1){return -1.0;}
         else{return 1.0;}
@@ -1356,7 +1377,7 @@ int* calc_conn(compl* orderp){
                                 z++;
                 }
                 if(z >= nbnd_cutoff){
-                // particle is crystal-like
+                // particle is solid-like
                         conn[i]=1;
                 } 
                 else {
