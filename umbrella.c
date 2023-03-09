@@ -96,7 +96,7 @@ int calcDGn(int c);
 // ======================
 // hard spheres system
 // ----------------------
-int N = 2000;                           // [READ FROM IMPUT] [-N] number of particles in the system
+int N = 4000;                           // [READ FROM IMPUT] [-N] number of particles in the system
 double L = 0.0f;                        // [READ FROM INPUT] reduced box size
 double LOld = 0.0f;                     // backup copy of the above
 double P = 17.0f;                       // [TUNABLE] [-P] reduced pressure --- only relevant for NPT
@@ -169,8 +169,10 @@ char* init_filename;                    // name of the initial configuration inp
 char lastsnap_filename[200];            // name of the last snapshot output file
 char movie_filename[200];               // name of the movie output file
 char clusterlog_filename[200];          // name of the clusters log output file
+FILE* saveclusters;
 char DGndata_filename[200];             // name of the DGn data output file
 char tracking_filename[200];            // name of the system information tracking file
+FILE* trackfile;
 char snap_filename[200];                // name of the snapshot file used to launch the next window
 int makeamovie = 0;                     // [TUNABLE] [-m] choice to make a movie of snapshots
 int snapshots = 100;                    // [TUNABLE] [-m snapshots] number of snapshots for the movie
@@ -1082,7 +1084,7 @@ void build_nblist(int method){
                                                 }
                                         }
                                 }
-                                return;
+                                break;
                 }
 
         }
@@ -1108,11 +1110,9 @@ int compare(const void * a, const void * b){
 compl* calc_order(void){
 /* Function:    calc_order
  * -----------------------
- * Computes the normalized inner product of the local bond-order
- * parameter (BOP)
+ * Computes the normalized qs (ten Wolde's local orientational order parameter) 
  *
- * return:     table of size 13*N of complex values of the inner
- *             product of the local BOP
+ * return:     table of size 13*N of complex type of the normalized qs
  */
         compl* q1;
         compl* q2;
@@ -1184,7 +1184,14 @@ double sqr(double x){
 void compute_order(int l, bndT *bnd, compl *res1, compl *res2){
 /* Function:    order
  * ------------------
- * 
+ * Computes the spherical harmonics for two neighbouring particles and feeds
+ * the sum of said spherical harmonics of all neighbouring particles for a
+ * given particle in calculating the local orientational order parameter
+ *
+ * l:           = 6
+ * bnd:         table of information about the bond
+ * res1:        sum of the spherical harmonics for particle 1
+ * res2:        sum of the spherical harmonics for particle 2
  */
         double fc,
                p,
@@ -1221,18 +1228,22 @@ void compute_order(int l, bndT *bnd, compl *res1, compl *res2){
                 fc = facs(l,m);
                 f = sqrt((2 * l + 1) * INVFPI * fc);
                 r = p * f;
+                // Chebyshev recursive method for computing cosine of multiple angles 
                 cpp = cp;
                 cp = c;
                 if(m == 1){c = bnd->co;}
-                else{c = 2.0 * bnd->co * cp - cpp;} //some cosine tricks
+                else{c = 2.0 * bnd->co * cp - cpp;}
+                // Chebyshev recursive method for computing sine of multiple angles 
                 spp = sp;
                 sp = s;
                 if(m == 1){s = bnd->si;}
-                else{s = 2.0 * bnd->co * sp - spp;} //some sine tricks
+                else{s = 2.0 * bnd->co * sp - spp;}
+                
                 (res1+m)->re += r*c;
                 (res1+m)->im += r*s;
                 (res2+m)->re += r*c;
                 (res2+m)->im += r*s;
+                
                 // For m < 0
                 r *= minpow(m);
                 (res1-m)->re += r*c;
@@ -1341,7 +1352,7 @@ double gammln(double xx){
                                 0.1208650973866179e-2,
                                 -0.5395239384953e-5
                                 };
-        int j;ml
+        int j;
         y = x = xx;
         tmp = x + 5.5;
         tmp -= (x + 0.5) * log(tmp);
@@ -1367,6 +1378,12 @@ double minpow(int m){
 int* calc_conn(compl* orderp){
 /* Function:    calc_conn
  * ----------------------
+ * Determines whether a particle is to be considered solid-like or not
+ *
+ * orderp:      table of normalized local oriental order parameters
+ *
+ * return:      table of int indicating whether a particle i is solid-like
+ *              (conn[i]=1) or not (conn[i]=0)
  */
         int z;
         const int l = 6;
@@ -1616,14 +1633,10 @@ int saveLogs(void){
  *
  * return:      0 for normal termination
  */
-        FILE *saveclusters = fopen(clusterlog_filename, "a");
-        if (saveclusters != NULL){
-                fprintf(saveclusters, "&%d\n", logBook->bookmark);
-                for (int i = 0; i < logBook->bookmark; i++){
-                        // cluster sizes are not saved in increasing order
-                        fprintf(saveclusters, "%d\t%d\n", logBook->size[i], logBook->qt[i]);
-                }
-                fclose(saveclusters);
+        fprintf(saveclusters, "&%d\n", logBook->bookmark);
+        for (int i = 0; i < logBook->bookmark; i++){
+                // cluster sizes are not saved in increasing order
+                fprintf(saveclusters, "%d\t%d\n", logBook->size[i], logBook->qt[i]);
         }
         return 0;
 }
@@ -1692,11 +1705,7 @@ void saveVerbose(int i){
  * ------------------------
  * Save some information on the system state and simulation
  */
-        FILE* trackfile = fopen(tracking_filename, "a");
-        if (trackfile != NULL){
-                fprintf(trackfile, "%d %.3lf %.4lf %.3lf %.4lf %d %d %.4lf %.4lf %.3lf %.3lf\n", i, arPm, pStepSize, arVm, vStepSize, aT, rT, L, PF, degX, degX_maxC);
-                fclose(trackfile);
-        }
+        fprintf(trackfile, "%d %.3lf %.4lf %.3lf %.4lf %d %d %.4lf %.4lf %.3lf %.3lf\n", i, arPm, pStepSize, arVm, vStepSize, aT, rT, L, PF, degX, degX_maxC);
 }
 
 
@@ -1757,13 +1766,17 @@ int main(int argc, char *argv[])
         if (save){
                 writefile = fopen(clusterlog_filename, "w+");
                 if (writefile != NULL){fclose(writefile);}
+                saveclusters = fopen(clusterlog_filename, "a");
+                if (saveclusters == NULL) exit(0);
         }
         if (track){
                 writefile = fopen(tracking_filename, "w+");
                 if (writefile != NULL){
-                        fprintf(writefile, "cycle arPm aPm rPm pStepSize arVm aVm rVm vStepSize aT rT L PF degC degC_maxC\n");
+                        fprintf(writefile, "cycle arPm pStepSize arVm vStepSize aT rT L PF degC degC_maxC\n");
                         fclose(writefile);
                 }
+                trackfile = fopen(tracking_filename, "a");
+                if (trackfile == NULL) exit(0);
         }
 
 
@@ -1796,7 +1809,8 @@ int main(int argc, char *argv[])
                 if (i%50 == 49){sanityCheck();}
                 if (i%trajectoryLength == trajectoryLength-1){
                         concludeTrajectory();
-                        if (snap && (maxClus > n0-2) && (maxClus < n0+2)) {
+                        if (snap && i > 0.1 * MCCycle && (maxClus > n0-2) && (maxClus < n0+2)) {
+                        // Wait until 10% of simtime to take a snapshot to start next window
                                 writefile = fopen(snap_filename, "w+");
                                 if (writefile != NULL) {fclose(writefile);}
                                 writeCoords(snap_filename, 0);
@@ -1836,6 +1850,8 @@ int main(int argc, char *argv[])
         
         // END
         writeCoords(lastsnap_filename, 0);
+        if (save) fclose(saveclusters);
+        if (track) fclose(trackfile);
         printf("[umbrella] Program terminated normally\n[umbrella] Produced %s\n[umbrella] Produced %s\n[umbrella] Produced %s\n", lastsnap_filename, DGndata_filename, snap_filename);
         if (save){printf("[umbrella] Produced %s\n", clusterlog_filename);}
         if (track){printf("[umbrella] Produced %s\n", tracking_filename);}
